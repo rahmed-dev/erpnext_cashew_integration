@@ -1,0 +1,275 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-04-08 21:45:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "row_idx",
+  "source_hash",
+  "raw_account",
+  "txn_date",
+  "month_key",
+  "raw_amount",
+  "source_currency",
+  "company_currency",
+  "exchange_rate",
+  "base_amount",
+  "txn_type",
+  "category",
+  "sub_category",
+  "item_label",
+  "section_break_15",
+  "resolved_route",
+  "resolved_account",
+  "resolved_erp_account",
+  "resolved_external_account",
+  "resolved_party_type",
+  "resolved_party",
+  "party_source",
+  "title",
+  "note",
+  "raw_txn_time",
+  "transfer_pair_row_idx",
+  "section_break_22",
+  "validation_status",
+  "validation_error_code",
+  "validation_error_message",
+  "posted_doctype",
+  "posted_docname",
+  "posted_gl_date",
+  "is_duplicate"
+ ],
+ "fields": [
+  {
+   "fieldname": "row_idx",
+   "fieldtype": "Int",
+   "label": "Row Index",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_hash",
+   "fieldtype": "Data",
+   "label": "Source Hash",
+   "reqd": 1,
+   "in_list_view": 0,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "raw_account",
+   "fieldtype": "Data",
+   "label": "Raw Account",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "txn_date",
+   "fieldtype": "Date",
+   "label": "Transaction Date",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "month_key",
+   "fieldtype": "Data",
+   "label": "Month (YYYY-MM)",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "raw_amount",
+   "fieldtype": "Currency",
+   "label": "Raw Amount",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_currency",
+   "fieldtype": "Link",
+   "label": "Source Currency",
+   "options": "Currency",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "company_currency",
+   "fieldtype": "Link",
+   "label": "Company Currency",
+   "options": "Currency",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "exchange_rate",
+   "fieldtype": "Float",
+   "label": "Exchange Rate"
+  },
+  {
+   "fieldname": "base_amount",
+   "fieldtype": "Currency",
+   "label": "Base Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "txn_type",
+   "fieldtype": "Select",
+   "label": "Transaction Type",
+   "options": "Income\nExpense\nTransfer\nExternal Transfer\nAdjustment",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Data",
+   "label": "Category",
+   "reqd": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "sub_category",
+   "fieldtype": "Data",
+   "label": "Sub Category",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_label",
+   "fieldtype": "Data",
+   "label": "Item Label",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_15",
+   "fieldtype": "Section Break",
+   "label": "Resolution"
+  },
+  {
+   "fieldname": "resolved_route",
+   "fieldtype": "Select",
+   "label": "Resolved Route",
+   "options": "\nSales Invoice\nPurchase Invoice\nJournal Entry\nTransfer JV\nExternal Transfer JE\nAdjustment JE"
+  },
+  {
+   "fieldname": "resolved_account",
+   "fieldtype": "Link",
+   "label": "Resolved Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "resolved_erp_account",
+   "fieldtype": "Link",
+   "label": "Resolved ERP Account (Cash)",
+   "options": "Account",
+   "read_only": 1
+  },
+  {
+   "fieldname": "resolved_external_account",
+   "fieldtype": "Link",
+   "label": "Resolved External Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "resolved_party_type",
+   "fieldtype": "Select",
+   "label": "Resolved Party Type",
+   "options": "\nCustomer\nSupplier\nNone"
+  },
+  {
+   "fieldname": "resolved_party",
+   "fieldtype": "Dynamic Link",
+   "label": "Resolved Party",
+   "options": "resolved_party_type"
+  },
+  {
+   "fieldname": "party_source",
+   "fieldtype": "Select",
+   "label": "Party Source",
+   "options": "\nPreview Override\nRun Default",
+   "read_only": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Title",
+   "read_only": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "raw_txn_time",
+   "fieldtype": "Time",
+   "label": "Raw Transaction Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transfer_pair_row_idx",
+   "fieldtype": "Int",
+   "label": "Transfer Pair Row Index"
+  },
+  {
+   "fieldname": "section_break_22",
+   "fieldtype": "Section Break",
+   "label": "Validation & Posting"
+  },
+  {
+   "fieldname": "validation_status",
+   "fieldtype": "Select",
+   "label": "Validation Status",
+   "options": "Valid\nError\nSkipped",
+   "reqd": 1
+  },
+  {
+   "fieldname": "validation_error_code",
+   "fieldtype": "Data",
+   "label": "Error Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "validation_error_message",
+   "fieldtype": "Small Text",
+   "label": "Error Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "posted_doctype",
+   "fieldtype": "Data",
+   "label": "Posted DocType",
+   "read_only": 1
+  },
+  {
+   "fieldname": "posted_docname",
+   "fieldtype": "Data",
+   "label": "Posted Docname",
+   "read_only": 1
+  },
+  {
+   "fieldname": "posted_gl_date",
+   "fieldtype": "Date",
+   "label": "Posted GL Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_duplicate",
+   "fieldtype": "Check",
+   "label": "Duplicate",
+   "default": 0,
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-08 21:45:00.000000",
+ "module": "Cashew Integration",
+ "name": "Cashew Import Row",
+ "owner": "Administrator",
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

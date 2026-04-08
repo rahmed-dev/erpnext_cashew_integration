@@ -1,0 +1,60 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-04-08 21:45:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "cashew_account_mapping",
+  "cashew_category_mapping"
+ ],
+ "fields": [
+  {
+   "fieldname": "cashew_account_mapping",
+   "fieldtype": "Table",
+   "label": "Cashew Account Mapping",
+   "options": "Cashew Account Mapping"
+  },
+  {
+   "fieldname": "cashew_category_mapping",
+   "fieldtype": "Table",
+   "label": "Cashew Category Mapping",
+   "options": "Cashew Category Mapping"
+  }
+ ],
+ "is_single": 1,
+ "links": [],
+ "modified": "2026-04-08 21:45:00.000000",
+ "module": "Cashew Integration",
+ "name": "Cashew Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accountant",
+   "share": 0,
+   "write": 0
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

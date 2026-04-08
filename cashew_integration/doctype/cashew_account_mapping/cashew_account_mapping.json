@@ -1,0 +1,56 @@
+{
+ "actions": [],
+ "allow_guest_to_view": 0,
+ "allow_import": 0,
+ "allow_rename": 1,
+ "creation": "2026-04-08 21:45:00.000000",
+ "custom": 0,
+ "doctype": "DocType",
+ "name": "Cashew Account Mapping",
+ "module": "Cashew Integration",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "cashew_account_name",
+  "erp_account",
+  "account_currency",
+  "is_active"
+ ],
+ "fields": [
+  {
+   "fieldname": "cashew_account_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cashew Account Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "erp_account",
+   "fieldtype": "Link",
+   "label": "ERP Account",
+   "options": "Account",
+   "reqd": 1
+  },
+  {
+   "fieldname": "account_currency",
+   "fieldtype": "Link",
+   "label": "Account Currency",
+   "options": "Currency",
+   "reqd": 1
+  },
+  {
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Active",
+   "default": "1"
+  }
+ ],
+ "idx": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-04-08 21:45:00.000000",
+ "owner": "Administrator",
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

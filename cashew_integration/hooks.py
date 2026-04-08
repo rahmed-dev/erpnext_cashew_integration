@@ -1,9 +1,11 @@
 app_name = "cashew_integration"
 app_title = "Cashew Integration"
-app_publisher = "rizwan"
-app_description = "integration for personal Expense Managment APP Cashew"
+app_publisher = "Cashew"
+app_description = "Integration with Cashew for importing CSV files."
 app_email = "ra9496300@gmail.com"
 app_license = "mit"
+app_logo_url = "/assets/cashew_integration/images/cashew-integration-logo.svg"
+app_home = "/app/cashew-integration"
 
 # Apps
 # ------------------
@@ -13,27 +15,28 @@ app_license = "mit"
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
-# 		"name": "cashew_integration",
-# 		"logo": "/assets/cashew_integration/logo.png",
-# 		"title": "Cashew Integration",
-# 		"route": "/cashew_integration",
-# 		"has_permission": "cashew_integration.api.permission.has_app_permission"
+# 		"name": "nexus_erp",
+# 		"logo": "/assets/nexus_erp/logo.png",
+# 		"title": "Nexus Erp",
+# 		"route": "/nexus_erp",
+# 		"has_permission": "nexus_erp.api.permission.has_app_permission"
 # 	}
 # ]
+
 
 # Includes in <head>
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/cashew_integration/css/cashew_integration.css"
-# app_include_js = "/assets/cashew_integration/js/cashew_integration.js"
+# app_include_css = "/assets/nexus_erp/css/nexus_erp.css"
+# app_include_js = "/assets/nexus_erp/js/nexus_erp.js"
 
 # include js, css files in header of web template
-# web_include_css = "/assets/cashew_integration/css/cashew_integration.css"
-# web_include_js = "/assets/cashew_integration/js/cashew_integration.js"
+# web_include_css = "/assets/nexus_erp/css/nexus_erp.css"
+# web_include_js = "/assets/nexus_erp/js/nexus_erp.js"
 
 # include custom scss in every website theme (without file extension ".scss")
-# website_theme_scss = "cashew_integration/public/scss/website"
+# website_theme_scss = "nexus_erp/public/scss/website"
 
 # include js, css files in header of web form
 # webform_include_js = {"doctype": "public/js/doctype.js"}
@@ -48,10 +51,13 @@ app_license = "mit"
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
+
+
+
 # Svg Icons
 # ------------------
 # include app icons in desk
-# app_include_icons = "cashew_integration/public/icons.svg"
+# app_include_icons = "nexus_erp/public/icons.svg"
 
 # Home Pages
 # ----------
@@ -78,43 +84,42 @@ app_license = "mit"
 
 # add methods and filters to jinja environment
 # jinja = {
-# 	"methods": "cashew_integration.utils.jinja_methods",
-# 	"filters": "cashew_integration.utils.jinja_filters"
+# 	"methods": "nexus_erp.utils.jinja_methods",
+# 	"filters": "nexus_erp.utils.jinja_filters"
 # }
 
 # Installation
 # ------------
 
-# before_install = "cashew_integration.install.before_install"
-# after_install = "cashew_integration.install.after_install"
+after_install = "cashew_integration.install.after_install"
 
 # Uninstallation
 # ------------
 
-# before_uninstall = "cashew_integration.uninstall.before_uninstall"
-# after_uninstall = "cashew_integration.uninstall.after_uninstall"
+# before_uninstall = "nexus_erp.uninstall.before_uninstall"
+# after_uninstall = "nexus_erp.uninstall.after_uninstall"
 
 # Integration Setup
 # ------------------
 # To set up dependencies/integrations with other apps
 # Name of the app being installed is passed as an argument
 
-# before_app_install = "cashew_integration.utils.before_app_install"
-# after_app_install = "cashew_integration.utils.after_app_install"
+# before_app_install = "nexus_erp.utils.before_app_install"
+# after_app_install = "nexus_erp.utils.after_app_install"
 
 # Integration Cleanup
 # -------------------
 # To clean up dependencies/integrations with other apps
 # Name of the app being uninstalled is passed as an argument
 
-# before_app_uninstall = "cashew_integration.utils.before_app_uninstall"
-# after_app_uninstall = "cashew_integration.utils.after_app_uninstall"
+# before_app_uninstall = "nexus_erp.utils.before_app_uninstall"
+# after_app_uninstall = "nexus_erp.utils.after_app_uninstall"
 
 # Desk Notifications
 # ------------------
 # See frappe.core.notifications.get_notification_config
 
-# notification_config = "cashew_integration.notifications.get_notification_config"
+# notification_config = "nexus_erp.notifications.get_notification_config"
 
 # Permissions
 # -----------
@@ -132,60 +137,54 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+
 
 # Scheduled Tasks
 # ---------------
 
 # scheduler_events = {
 # 	"all": [
-# 		"cashew_integration.tasks.all"
+# 		"nexus_erp.tasks.all"
 # 	],
 # 	"daily": [
-# 		"cashew_integration.tasks.daily"
+# 		"nexus_erp.tasks.daily"
 # 	],
 # 	"hourly": [
-# 		"cashew_integration.tasks.hourly"
+# 		"nexus_erp.tasks.hourly"
 # 	],
 # 	"weekly": [
-# 		"cashew_integration.tasks.weekly"
+# 		"nexus_erp.tasks.weekly"
 # 	],
 # 	"monthly": [
-# 		"cashew_integration.tasks.monthly"
+# 		"nexus_erp.tasks.monthly"
 # 	],
 # }
 
 # Testing
 # -------
 
-# before_tests = "cashew_integration.install.before_tests"
+# before_tests = "nexus_erp.install.before_tests"
 
 # Extend DocType Class
 # ------------------------------
 #
 # Specify custom mixins to extend the standard doctype controller.
 # extend_doctype_class = {
-# 	"Task": "cashew_integration.custom.task.CustomTaskMixin"
+# 	"Task": "nexus_erp.custom.task.CustomTaskMixin"
 # }
 
 # Overriding Methods
 # ------------------------------
 #
 # override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "cashew_integration.event.get_events"
+# 	"frappe.desk.doctype.event.event.get_events": "nexus_erp.event.get_events"
 # }
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
 # along with any modifications made in other Frappe apps
 # override_doctype_dashboards = {
-# 	"Task": "cashew_integration.task.get_dashboard_data"
+# 	"Task": "nexus_erp.task.get_dashboard_data"
 # }
 
 # exempt linked doctypes from being automatically cancelled
@@ -199,13 +198,13 @@ app_license = "mit"
 
 # Request Events
 # ----------------
-# before_request = ["cashew_integration.utils.before_request"]
-# after_request = ["cashew_integration.utils.after_request"]
+# before_request = ["nexus_erp.utils.before_request"]
+# after_request = ["nexus_erp.utils.after_request"]
 
 # Job Events
 # ----------
-# before_job = ["cashew_integration.utils.before_job"]
-# after_job = ["cashew_integration.utils.after_job"]
+# before_job = ["nexus_erp.utils.before_job"]
+# after_job = ["nexus_erp.utils.after_job"]
 
 # User Data Protection
 # --------------------
@@ -235,7 +234,7 @@ app_license = "mit"
 # --------------------------------
 
 # auth_hooks = [
-# 	"cashew_integration.auth.validate"
+# 	"nexus_erp.auth.validate"
 # ]
 
 # Automatically update python controller files with type annotations for this app.
@@ -249,4 +248,13 @@ app_license = "mit"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
+
+# Fixtures
+# --------
+fixtures = [
+    {
+        "doctype": "Custom Field",
+        "filters": [["module", "=", "Cashew Integration"]],
+    }
+]
 
