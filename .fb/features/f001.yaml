@@ -1,0 +1,67 @@
+id: f001
+name: Cashew CSV Import
+status: pending-review
+stage: pending-review
+owner: bmad-fb-dev
+
+goal: >
+  Import Cashew transaction CSV files into ERPNext/Frappe data structures
+  with clear validation, mapping, and error reporting.
+
+user_stories:
+  - As an accountant, I can upload a Cashew CSV file and preview parsed rows with default mappings before import.
+  - As an accountant, I can see validation errors per row and only import valid records.
+  - As an admin, I can rerun imports idempotently without creating duplicate accounting documents.
+  - As an accountant, I can resolve customer/supplier per invoice row during preview (without editing CSV) so required ERP fields are complete before posting.
+  - As an accountant, I can import files that contain internal account transfers (Balance Correction pairs), and they post as Transfer JVs — including cross-currency transfers (e.g., USD → PKR).
+
+acceptance_notes:
+  - CSV parser handles all Cashew export columns including quoted multi-line notes, datetime with milliseconds, and boolean income flag.
+  - source_hash algorithm is SHA-256 over canonical row fields; fully specified in spec.
+  - Category, party, and Cashew account mapping is configuration-driven (maintained in app DocTypes, not hardcoded).
+  - Balance Correction rows are detected by category and paired by note content; each valid pair posts as one Transfer JE.
+  - Cross-currency transfer pairs use the implied rate (derived from pair amounts) to ensure JV balances in company currency.
+  - Import process records success/failure/skipped counts and row-level diagnostics; diagnostics CSV attached to run.
+  - Idempotency guard operates on (source_hash, company); duplicate rows flagged not failed.
+  - Multi-currency rows (PKR and USD) are supported with explicit exchange-rate resolution and base-currency reconciliation.
+  - SI/PI posting uses a single reusable Cashew Import Item; item description carries party+category+month label.
+  - No tax templates applied on import; ignore_pricing_rule=1 on all SI/PI.
+  - Mandatory fields populated from config/defaults matrix; missing defaults abort queue with explicit error code.
+  - Permissions defined per DocType: Accountant read/write/create on runs; System Manager manages config.
+
+components:
+  - id: c001
+    name: Data Model (Cashew Settings singleton with Account+Category child tables, Import Run, Import Row)
+    stage: pending-review
+  - id: c002
+    name: CSV Parser + Normalizer (column mapping, datetime, hash, Balance Correction classification + pairing)
+    stage: pending-review
+  - id: c003
+    name: Mapping + Preview Override Engine (account, category, exchange rate, run-default party)
+    stage: pending-review
+  - id: c004
+    name: Validation Engine
+    stage: pending-review
+  - id: c005
+    name: Posting Engine (SI / PI / JE / Transfer JV / External Transfer JE / Adjustment JE)
+    stage: pending-review
+  - id: c006
+    name: Idempotency Guard
+    stage: pending-review
+  - id: c007
+    name: Async Worker + Progress Polling
+    stage: pending-review
+  - id: c008
+    name: Diagnostics CSV
+    stage: pending-review
+  - id: c009
+    name: Install-Time Setup (Cashew Settings singleton, item, custom fields)
+    stage: pending-review
+
+test_requirements:
+  automated: true
+  notes: Unit tests for parser and mapping; integration tests for import flow.
+
+spec:
+  path: .fb/specs/f001-cashew-csv-import.md
+  status: approved

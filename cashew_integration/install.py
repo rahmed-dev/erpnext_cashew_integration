@@ -18,5 +18,7 @@ def after_install():
 
 
 def _create_cashew_settings():
-    if not frappe.db.exists("Cashew Settings", "Cashew Settings"):
-        frappe.get_doc({"doctype": "Cashew Settings"}).insert(ignore_permissions=True)
+    # For Single DocTypes, frappe.db.exists() always returns True (Frappe v16 shortcut).
+    # Check tabSingles directly to see if the singleton has ever been saved.
+    if not frappe.db.get_singles_dict("Cashew Settings"):
+        frappe.get_doc({"doctype": "Cashew Settings"}).save(ignore_permissions=True)

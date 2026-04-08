@@ -1,0 +1,18 @@
+created: 2026-04-08
+app: cashew_integration
+
+milestones:
+  - date: 2026-04-08
+    stage: architect
+    result: pass
+    note: Architecture decisions and rationale cover required areas without contradictions.
+  - date: 2026-04-08
+    stage: td
+    result: pass
+    note: f001 technical spec approved and handed off to Dev with explicit accrual/cash resolution and default-party strategy.
+
+delivery: ~
+
+carry_forwards: []
+
+revision_log: []

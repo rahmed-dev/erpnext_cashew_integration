@@ -1,0 +1,110 @@
+stage: dev
+feature: f001
+assigned_to: bmad-fb-dev
+status: awaiting-gate
+summary: |
+  All 9 components of f001 (Cashew CSV Import) implemented and 43 automated
+  tests pass (bench --site work.local run-tests --app cashew_integration).
+
+  Test coverage:
+    cashew_integration/tests/test_parser.py (18 tests) — unit tests, no DB:
+      Column mapping: all required fields parsed, txn_type Income/Expense/Transfer
+      assigned, same-currency exchange rate defaulted, foreign-currency left None.
+      SHA-256 hash: deterministic across runs, matches reference implementation,
+      full-precision amount (9522.79091992 ≠ 9522.79), every row produces a unique
+      hash.
+      Balance Correction classification: PKR same-currency pair → Transfer with
+      symmetric pair links; cross-currency (USD→PKR) pair → Transfer; solo leg with
+      external partner → External Transfer; no-note Balance Correction → Adjustment.
+
+    cashew_integration/tests/test_mapping.py (19 tests) — unit tests, mocked DB:
+      Account mapping: all 4 live Cashew accounts (Petty Cash→Cash-CS, NSave→
+      Meezan Bank-CS, Saving→Crypto-CS, Investment→Earnest Money-CS) resolve;
+      unmapped account → CASHEW_ACCOUNT_NOT_MAPPED.
+      Category mapping: 15 real categories resolve to JE or SI routes with correct
+      expense accounts; (cat, sub) falls back to (cat, ""); Transfer/External
+      Transfer/Adjustment skip category lookup.
+      Party resolution: SI→default_customer, PI→default_supplier, JE skips, preview
+      override takes precedence over run default.
+      Full apply_mappings path: expense row fully resolved; income row gets customer;
+      error rows skipped; foreign-currency row stays None when no ERP rate.
+
+    cashew_integration/tests/test_integration.py (6 tests) — FrappeTestCase,
+    real Code.Solutions DB (accounts, company, cost center):
+      Parse+validate pipeline: all 5 rows classified; expense rows → JE with correct
+      accounts; transfer pair linked; unmapped category → MAPPING_NOT_FOUND at
+      queue time.
+      Full import run → JE: _process() creates submitted Journal Entries for 2 PKR
+      expense rows, run.status=Completed, rows_failed=0, cashew_import_run and
+      cashew_row_hash fields set on each JE.
+      Idempotency re-run: second run with identical hashes → all rows Skipped,
+      rows_posted=0, is_duplicate=1, posted_docname references the original JE.
+
+  Side fix during test authorship:
+    cashew_settings.json used "is_single" (wrong key) instead of "issingle" — the
+    DocType was not recognised as a Single by Frappe and frappe.get_single() failed.
+    Fixed and migrated (issingle=1 now set in tabDocType).
+    install.py _create_cashew_settings() updated to use frappe.db.get_singles_dict()
+    check (db.exists() always returns True for Singles in Frappe v16).
+
+  Original 9 components of f001 (Cashew CSV Import) implemented:
+
+  C001 — Data Model
+    Fixed cashew_settings.json (is_single, permissions), cashew_import_row.json
+    (istable, item_label field), cashew_import_run.json (Accountant create perm,
+    reqd fields, Import Rows child table), moved cashew_category_mapping.json to
+    correct folder. Fixed CashewImportRun controller (on_trash only).
+
+  C002 — CSV Parser + Normalizer
+    cashew_integration/importer/parser.py — full column mapping, datetime split,
+    SHA-256 source hash (full-precision amount), txn_type initial assignment,
+    Balance Correction/Transfer classification pass (paired/external/adjustment).
+
+  C003 — Mapping + Preview Override Engine
+    cashew_integration/importer/mapping.py — account map, category map, ERP
+    exchange rate pre-fill, run-default party fallback.
+
+  C004 — Validation Engine
+    cashew_integration/importer/validation.py — queue-time per-row rules
+    (MAPPING_NOT_FOUND, INVALID_ACCOUNT_TYPE, PARTY_UNRESOLVED,
+    EXCHANGE_RATE_MISSING/INVALID), transfer pair atomicity, run-config check
+    (RUN_CONFIG_MISSING).
+
+  C005 — Posting Engine
+    cashew_integration/importer/posting.py — SI, PI, JE, Transfer JV (same/
+    cross-currency implied rate, imbalance guard), External Transfer JE,
+    Adjustment JE, Payment Entry settlement.
+
+  C006 — Idempotency Guard
+    cashew_integration/importer/idempotency.py — primary check via
+    Cashew Import Row + secondary check on ERP document cashew_row_hash custom
+    field; transfer pair propagation.
+
+  C007 — Async Worker + Progress Polling
+    cashew_integration/importer/worker.py — enqueue_run, process_run,
+    progress flush every N rows, unmatched transfer leg cleanup, error logging.
+
+  C008 — Diagnostics CSV
+    cashew_integration/importer/diagnostics.py — all spec columns including
+    review_recommended flag for Adjustment rows; saved as private attachment.
+
+  C009 — Install-Time Setup
+    cashew_integration/install.py — after_install: idempotent Cashew Settings
+    singleton creation + custom fields (cashew_import_run, cashew_row_hash,
+    cashew_row_idx) on SI/PI/JE. Wired into hooks.py.
+
+  Public API (cashew_integration/api.py):
+    parse_and_preview, queue_run, get_run_progress — all whitelisted with
+    has_permission checks.
+
+manual_verification:
+  - bench --site work.local migrate (confirm no migration errors after uninstall/reinstall)
+  - Cashew Settings singleton visible in Desk, Accountant role can read
+  - Create a Cashew Import Run, attach a Cashew CSV, call parse_and_preview
+  - Confirm rows appear with correct txn_type, resolved_route, exchange_rate pre-fill
+  - Set default_customer/supplier, call queue_run, confirm status → Queued
+  - Start bench worker, confirm run completes and diagnostics CSV attaches
+  - Re-run same file, confirm rows appear as Skipped (is_duplicate=1)
+
+test_status: passed
+gate_result:

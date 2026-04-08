@@ -1,0 +1,13 @@
+id: f002
+name: Cashew Automated Sync
+status: backlog
+stage: not-started
+owner: bmad-fb-architect
+
+goal: >
+  Replace or complement manual CSV imports with an automated sync mechanism
+  if Cashew exposes a supported API, webhook, or integration channel.
+
+notes:
+  - Discovery task only for now; implementation deferred until f001 is stable.
+  - Keep boundaries in f001 clean so transport (CSV/API) can be swapped later.

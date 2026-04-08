@@ -1,0 +1,71 @@
+{
+ "app": "cashew_integration",
+ "charts": [],
+ "content": "[{\"id\":\"cashew-hdr\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Cashew CSV Import</b></span>\",\"col\":12}},{\"id\":\"uf5zRvy6nY\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Cashew Import Run\",\"col\":3}},{\"id\":\"iTaM8s6iX-\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Cashew Settings\",\"col\":3}}]",
+ "creation": "2026-04-09 12:00:00",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "upload",
+ "idx": 50,
+ "indicator_color": "",
+ "is_hidden": 0,
+ "label": "Cashew Integration",
+ "links": [
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Cashew Import Run",
+   "link_count": 0,
+   "link_to": "Cashew Import Run",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Cashew Settings",
+   "link_count": 0,
+   "link_to": "Cashew Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-04-09 00:48:01.469412",
+ "modified_by": "Administrator",
+ "module": "Cashew Integration",
+ "name": "Cashew Integration",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [],
+ "sequence_id": 50.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Cashew Import Run",
+   "link_to": "Cashew Import Run",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Cashew Settings",
+   "link_to": "Cashew Settings",
+   "type": "DocType"
+  }
+ ],
+ "title": "Cashew Integration",
+ "type": "Workspace"
+}

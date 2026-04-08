@@ -13,15 +13,14 @@ app_home = "/app/cashew-integration"
 # required_apps = []
 
 # Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "nexus_erp",
-# 		"logo": "/assets/nexus_erp/logo.png",
-# 		"title": "Nexus Erp",
-# 		"route": "/nexus_erp",
-# 		"has_permission": "nexus_erp.api.permission.has_app_permission"
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": "cashew_integration",
+		"logo": "/assets/frappe/images/frappe-framework-logo.svg",
+		"title": "Cashew Integration",
+		"route": "/app/cashew-integration",
+	}
+]
 
 
 # Includes in <head>
