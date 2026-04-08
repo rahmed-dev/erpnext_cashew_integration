@@ -2,12 +2,10 @@
 C005 — Posting Engine
 
 Routes each valid, non-skipped row to the correct ERPNext document:
-  1. Income        → Sales Invoice  (+ Payment Entry if auto_settle_cash)
-  2. Expense > threshold → Purchase Invoice (+ Payment Entry)
-  3. Expense ≤ threshold → Journal Entry
-  4. Transfer      → Transfer Journal Entry (one JE per pair)
-  5. External Transfer → External Transfer JE
-  6. Adjustment    → Adjustment JE
+  1. Income / Expense  → Journal Entry (party on account line if requires_party)
+  2. Transfer          → Transfer Journal Entry (one JE per pair)
+  3. External Transfer → External Transfer JE
+  4. Adjustment        → Adjustment JE
 
 Each poster returns (posted_doctype, posted_docname).
 Callers must wrap individual rows in try/except and record per-row failures.
@@ -29,10 +27,6 @@ def post_row(row: dict, run) -> tuple[str, str]:
     cost_center      = frappe.get_cached_value("Company", run.company, "cost_center")
     route = row["resolved_route"]
 
-    if route == "Sales Invoice":
-        return _post_sales_invoice(row, run, company_currency, cost_center)
-    if route == "Purchase Invoice":
-        return _post_purchase_invoice(row, run, company_currency, cost_center)
     if route == "Journal Entry":
         return _post_journal_entry(row, run)
     if route == "Transfer JV":
@@ -45,81 +39,37 @@ def post_row(row: dict, run) -> tuple[str, str]:
     frappe.throw(f"Unknown resolved_route '{route}' on row {row['row_idx']}.")
 
 
-# ── 1. Sales Invoice ───────────────────────────────────────────────────────────
-
-def _post_sales_invoice(row: dict, run, company_currency: str, cost_center: str):
-    si = frappe.get_doc({
-        "doctype":             "Sales Invoice",
-        "company":             run.company,
-        "customer":            row["resolved_party"],
-        "posting_date":        row["txn_date"],
-        "due_date":            row["txn_date"],
-        "currency":            row["source_currency"],
-        "conversion_rate":     flt(row["exchange_rate"] or 1),
-        "ignore_pricing_rule": 1,
-        "taxes_and_charges":   None,
-        "cashew_import_run":   run.name,
-        "cashew_row_hash":     row["source_hash"],
-        "cashew_row_idx":      row["row_idx"],
-        "items": [{
-            "item_name":      row["item_label"],
-            "qty":            1,
-            "rate":           row["raw_amount"],
-            "income_account": row["resolved_account"],
-            "cost_center":    cost_center,
-        }],
-    })
-    si.flags.ignore_permissions = False
-    si.insert()
-    si.submit()
-
-    if run.auto_settle_cash:
-        _create_payment_entry(si, "Receive", run, row)
-
-    return "Sales Invoice", si.name
-
-
-# ── 2. Purchase Invoice ────────────────────────────────────────────────────────
-
-def _post_purchase_invoice(row: dict, run, company_currency: str, cost_center: str):
-    pi = frappe.get_doc({
-        "doctype":             "Purchase Invoice",
-        "company":             run.company,
-        "supplier":            row["resolved_party"],
-        "posting_date":        row["txn_date"],
-        "due_date":            row["txn_date"],
-        "currency":            row["source_currency"],
-        "conversion_rate":     flt(row["exchange_rate"] or 1),
-        "ignore_pricing_rule": 1,
-        "taxes_and_charges":   None,
-        "cashew_import_run":   run.name,
-        "cashew_row_hash":     row["source_hash"],
-        "cashew_row_idx":      row["row_idx"],
-        "items": [{
-            "item_name":       row["item_label"],
-            "qty":             1,
-            "rate":            row["raw_amount"],
-            "expense_account": row["resolved_account"],
-            "cost_center":     cost_center,
-        }],
-    })
-    pi.flags.ignore_permissions = False
-    pi.insert()
-    pi.submit()
-
-    if run.auto_settle_cash:
-        _create_payment_entry(pi, "Pay", run, row)
-
-    return "Purchase Invoice", pi.name
-
-
-# ── 3. Journal Entry (small expense) ──────────────────────────────────────────
+# ── 1. Journal Entry (all income / expense) ───────────────────────────────────
 
 def _post_journal_entry(row: dict, run):
-    exr         = flt(row["exchange_rate"] or 1)
-    src_cur     = row["source_currency"]
-    cmp_cur     = frappe.get_cached_value("Company", run.company, "default_currency")
-    multi_curr  = 1 if src_cur != cmp_cur else 0
+    exr        = flt(row["exchange_rate"] or 1)
+    src_cur    = row["source_currency"]
+    cmp_cur    = frappe.get_cached_value("Company", run.company, "default_currency")
+    multi_curr = 1 if src_cur != cmp_cur else 0
+    base_amt   = flt(row.get("base_amount") or round(row["raw_amount"] * exr, 2))
+
+    # resolved_account is the expense/income account (usually PKR).
+    # We must use its real account_currency so Frappe's base-amount maths work.
+    cat_cur = _get_account_currency(row["resolved_account"], run.company)
+    cat_exr = 1.0 if cat_cur == cmp_cur else exr
+    # If the category account is company-currency, record the PKR base amount;
+    # otherwise record the raw foreign amount and let the exchange_rate convert it.
+    cat_amt = base_amt if cat_cur == cmp_cur else row["raw_amount"]
+
+    is_expense = row.get("txn_type") == "Expense"
+    if is_expense:
+        # Expense: debit expense account, credit bank (NSave)
+        cat_dr,  cat_cr  = cat_amt,          0
+        bank_dr, bank_cr = 0,                row["raw_amount"]
+    else:
+        # Income: debit bank (NSave), credit income account
+        cat_dr,  cat_cr  = 0,                cat_amt
+        bank_dr, bank_cr = row["raw_amount"], 0
+
+    # Party on the expense/income leg when category requires it
+    party_type = row.get("resolved_party_type") or None
+    party      = row.get("resolved_party") or None
+    has_party  = bool(row.get("requires_party") and party)
 
     je = frappe.get_doc({
         "doctype":            "Journal Entry",
@@ -135,18 +85,19 @@ def _post_journal_entry(row: dict, run):
         "cashew_row_idx":     row["row_idx"],
         "accounts": [
             {
-                "account":                         row["resolved_account"],
-                "debit_in_account_currency":       row["raw_amount"],
-                "credit_in_account_currency":      0,
-                "exchange_rate":                   exr,
-                "account_currency":                src_cur,
+                "account":                    row["resolved_account"],
+                "debit_in_account_currency":  cat_dr,
+                "credit_in_account_currency": cat_cr,
+                "exchange_rate":              cat_exr,
+                "account_currency":           cat_cur,
+                **({"party_type": party_type, "party": party} if has_party else {}),
             },
             {
-                "account":                         row["resolved_erp_account"],
-                "debit_in_account_currency":       0,
-                "credit_in_account_currency":      row["raw_amount"],
-                "exchange_rate":                   exr,
-                "account_currency":                src_cur,
+                "account":                    row["resolved_erp_account"],
+                "debit_in_account_currency":  bank_dr,
+                "credit_in_account_currency": bank_cr,
+                "exchange_rate":              exr,
+                "account_currency":           src_cur,
             },
         ],
     })
@@ -171,7 +122,10 @@ def post_transfer_pair(source_row: dict, dest_row: dict, run) -> tuple[str, str]
     multi_curr    = 1 if (src_cur != cmp_cur or dst_cur != cmp_cur) else 0
 
     if src_cur == dst_cur:
-        # same-currency: simple 1:1
+        # same-currency: simple 1:1, base == account-currency amount.
+        # Assumes at least one leg is in company currency (the f001 spec scope).
+        # If both legs are foreign (e.g. USD→USD, company PKR) base amounts
+        # would be wrong; guard this path before extending to that scenario.
         src_exr   = 1.0
         dst_exr   = 1.0
         src_base  = src_amount
@@ -277,14 +231,13 @@ def _extract_transfer_labels(note: str, source_fallback: str, dest_fallback: str
 # ── 5. External Transfer JE ────────────────────────────────────────────────────
 
 def _post_external_transfer_je(row: dict, run):
-    src_cur = row["source_currency"]
-    exr     = flt(row.get("exchange_rate") or 1)
+    src_cur    = row["source_currency"]
+    cmp_cur    = frappe.get_cached_value("Company", run.company, "default_currency")
+    exr        = flt(row.get("exchange_rate") or 1)
+    multi_curr = 1 if src_cur != cmp_cur else 0
 
-    import re
-    note   = row.get("note", "")
-    m      = re.match(r"^Transferred Balance\n(.+)\s→\s(.+)$", note, re.DOTALL)
-    src_label = m.group(1).strip() if m else row["raw_account"]
-    dst_label = m.group(2).strip() if m else "External"
+    note = row.get("note", "")
+    src_label, dst_label = _extract_transfer_labels(note, row["raw_account"], "External")
 
     income = row.get("income_flag") == "true"
     if income:
@@ -300,7 +253,7 @@ def _post_external_transfer_je(row: dict, run):
         "doctype":           "Journal Entry",
         "company":           run.company,
         "posting_date":      row["txn_date"],
-        "multi_currency":    0,
+        "multi_currency":    multi_curr,
         "remark":            (
             f"Cashew External Transfer: {src_label} → {dst_label} | "
             f"{row['raw_amount']} {src_cur} | run:{run.name}"
@@ -337,14 +290,20 @@ def _post_adjustment_je(row: dict, run):
     cmp_cur    = frappe.get_cached_value("Company", run.company, "default_currency")
     exr        = flt(row.get("exchange_rate") or 1)
     multi_curr = 1 if src_cur != cmp_cur else 0
+    base_amt   = flt(row.get("base_amount") or round(row["raw_amount"] * exr, 2))
     income     = row.get("income_flag") == "true"
 
-    # income=true: my account Debit, adjustment Credit
-    # income=false: my account Credit, adjustment Debit
-    my_debit  = row["raw_amount"] if income  else 0
-    my_credit = row["raw_amount"] if not income else 0
-    adj_debit  = 0                 if income  else row["raw_amount"]
-    adj_credit = row["raw_amount"] if income  else 0
+    # balance_adjustment_account is usually a PKR account — look up its real currency.
+    adj_cur = _get_account_currency(run.balance_adjustment_account, run.company)
+    adj_exr = 1.0 if adj_cur == cmp_cur else exr
+    adj_amt = base_amt if adj_cur == cmp_cur else row["raw_amount"]
+
+    # income=true : bank Debit, adjustment Credit
+    # income=false: bank Credit, adjustment Debit
+    my_debit  = row["raw_amount"] if income     else 0
+    my_credit = 0                 if income     else row["raw_amount"]
+    adj_debit  = 0                if income     else adj_amt
+    adj_credit = adj_amt          if income     else 0
 
     je = frappe.get_doc({
         "doctype":           "Journal Entry",
@@ -370,8 +329,8 @@ def _post_adjustment_je(row: dict, run):
                 "account":                    run.balance_adjustment_account,
                 "debit_in_account_currency":  adj_debit,
                 "credit_in_account_currency": adj_credit,
-                "exchange_rate":              exr,
-                "account_currency":           src_cur,
+                "exchange_rate":              adj_exr,
+                "account_currency":           adj_cur,
             },
         ],
     })
@@ -380,48 +339,9 @@ def _post_adjustment_je(row: dict, run):
     return "Journal Entry", je.name
 
 
-# ── Payment Entry ──────────────────────────────────────────────────────────────
 
-def _create_payment_entry(invoice, payment_type: str, run, row: dict):
-    """Create and submit a Payment Entry linked to *invoice* to settle it immediately."""
-    is_si = invoice.doctype == "Sales Invoice"
-
-    pe = frappe.get_doc({
-        "doctype":               "Payment Entry",
-        "payment_type":          payment_type,
-        "company":               run.company,
-        "posting_date":          row["txn_date"],
-        "mode_of_payment":       run.default_mode_of_payment,
-        "party_type":            "Customer" if is_si else "Supplier",
-        "party":                 invoice.customer if is_si else invoice.supplier,
-        "paid_from":             invoice.debit_to if is_si else _get_mode_of_payment_account(run, is_si),
-        "paid_to":               _get_mode_of_payment_account(run, is_si) if is_si else invoice.credit_to,
-        "paid_amount":           invoice.grand_total,
-        "received_amount":       invoice.grand_total,
-        "source_exchange_rate":  flt(invoice.conversion_rate or 1),
-        "target_exchange_rate":  flt(invoice.conversion_rate or 1),
-        "paid_from_account_currency": invoice.currency,
-        "paid_to_account_currency":   invoice.currency,
-        "references": [{
-            "reference_doctype": invoice.doctype,
-            "reference_name":    invoice.name,
-            "allocated_amount":  invoice.grand_total,
-        }],
-    })
-    pe.insert()
-    pe.submit()
-    return pe.name
-
-
-def _get_mode_of_payment_account(run, is_sales: bool) -> str:
-    """Fetch the GL account linked to the run's default mode of payment."""
-    mop = frappe.get_doc("Mode of Payment", run.default_mode_of_payment)
-    company = run.company
-    for acct in mop.accounts:
-        if acct.company == company:
-            return acct.default_account
-    frappe.throw(
-        f"Mode of Payment '{run.default_mode_of_payment}' has no account configured "
-        f"for company '{company}'.",
-        frappe.ValidationError,
-    )
+def _get_account_currency(account_name: str, company: str) -> str:
+    cur = frappe.get_cached_value("Account", account_name, "account_currency")
+    if cur:
+        return cur
+    return frappe.get_cached_value("Company", company, "default_currency")

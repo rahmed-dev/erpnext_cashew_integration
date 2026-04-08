@@ -62,6 +62,10 @@ def process_run(run_name: str) -> None:
 def _process(run_name: str) -> None:
     run = frappe.get_doc("Cashew Import Run", run_name)
 
+    if run.status == "Cancelled":
+        # Cancelled before worker started; exit quietly.
+        return
+
     if run.status not in ("Queued",):
         frappe.throw(f"Run {run_name} is not in Queued status (current: {run.status}).")
 
@@ -90,6 +94,12 @@ def _process(run_name: str) -> None:
     pending_transfer: dict[int, dict] = {}
 
     for i, row in enumerate(rows):
+        if _is_run_cancelled(run_name):
+            _update_counters(run, posted, failed, skipped)
+            run.db_set("finished_on", now(), notify=True)
+            frappe.db.commit()
+            return
+
         status = row.get("validation_status")
 
         if status == "Skipped":
@@ -177,7 +187,8 @@ def _process(run_name: str) -> None:
         frappe.log_error(frappe.get_traceback(),
                          f"Cashew Diagnostics CSV Error: run={run.name}")
 
-    run.db_set("status",      "Completed", notify=True)
+    final_status = "Failed" if failed > 0 else "Completed"
+    run.db_set("status",      final_status, notify=True)
     run.db_set("finished_on", now(),        notify=True)
     frappe.db.commit()
 
@@ -210,6 +221,8 @@ def _write_row_result(run, row: dict) -> None:
             "party_source":            row.get("party_source"),
             "resolved_route":          row.get("resolved_route"),
             "resolved_account":        row.get("resolved_account"),
+            "resolved_income_account": row.get("resolved_income_account"),
+            "resolved_expense_account": row.get("resolved_expense_account"),
             "resolved_erp_account":    row.get("resolved_erp_account"),
             "resolved_external_account": row.get("resolved_external_account"),
         },
@@ -226,3 +239,8 @@ def _mark_row_error(row: dict, message: str) -> None:
     row["validation_status"]        = "Error"
     row["validation_error_code"]    = row.get("validation_error_code") or "POSTING_ERROR"
     row["validation_error_message"] = message
+
+
+def _is_run_cancelled(run_name: str) -> bool:
+    status = frappe.db.get_value("Cashew Import Run", run_name, "status")
+    return status == "Cancelled"

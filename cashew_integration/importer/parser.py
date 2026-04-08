@@ -88,14 +88,29 @@ def _validate_headers(reader: csv.DictReader) -> list[str]:
     if reader.fieldnames is None:
         frappe.throw("The CSV file is empty.", frappe.ValidationError, title="FILE_EMPTY")
     lowered = {h.strip().lower() for h in reader.fieldnames}
+    if _is_summary_export(lowered):
+        frappe.throw(
+            "This file looks like a Cashew summary/pivot export (for example, "
+            "'Row Labels' / 'Sum of amount'), not the raw transaction export. "
+            "Please export transactions directly from Cashew (Settings -> Export) "
+            "and upload that CSV.",
+            frappe.ValidationError,
+            title="FILE_WRONG_EXPORT_TYPE",
+        )
     missing = REQUIRED_COLUMNS - lowered
     if missing:
         frappe.throw(
-            f"CSV is missing required columns: {', '.join(sorted(missing))}",
+            f"CSV is missing required columns: {', '.join(sorted(missing))}. "
+            "Please export the file directly from the Cashew app "
+            "(Settings → Export) and attach that file.",
             frappe.ValidationError,
             title="FILE_MISSING_COLUMNS",
         )
     return reader.fieldnames
+
+
+def _is_summary_export(headers_lowered: set[str]) -> bool:
+    return "row labels" in headers_lowered and "sum of amount" in headers_lowered
 
 
 # ── row parsing ────────────────────────────────────────────────────────────────
@@ -221,14 +236,20 @@ def _classify_transfer_rows(rows: list[dict]) -> None:
 
     Mutates rows in-place.
     """
-    transfer_rows = [r for r in rows if r["txn_type"] == "Transfer"
-                     and r["validation_status"] == "Valid"]
+    transfer_rows = [
+        r for r in rows
+        if r.get("txn_type") == "Transfer" and r.get("validation_status") == "Valid"
+    ]
 
     if not transfer_rows:
         return
 
     # all raw_account values present in the file (for partner-exists check)
-    all_accounts_in_file = {r["raw_account"] for r in rows}
+    all_accounts_in_file = {
+        (r.get("raw_account") or "").strip()
+        for r in rows
+        if (r.get("raw_account") or "").strip()
+    }
 
     # index by row_idx for O(1) lookup when linking pair partners
     by_idx = {r["row_idx"]: r for r in rows}

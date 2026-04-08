@@ -29,11 +29,25 @@ def validate_run_config(run, rows: list[dict]) -> None:
 
     Must be called before enqueuing the worker.
     """
-    has_adjustment = any(r.get("txn_type") == "Adjustment" for r in rows
-                         if r.get("validation_status") == "Valid")
+    errors = get_run_config_errors(run, rows)
+    if errors:
+        frappe.throw(
+            "Run configuration is incomplete:\n" + "\n".join(f"• {e}" for e in errors),
+            frappe.ValidationError,
+            title="RUN_CONFIG_MISSING",
+        )
+
+
+def get_run_config_errors(run, rows: list[dict]) -> list[str]:
+    """
+    Return run-level config gaps for the current row set without raising.
+    """
+    has_adjustment = any(
+        r.get("txn_type") == "Adjustment" for r in rows
+        if r.get("validation_status") == "Valid"
+    )
 
     errors = []
-
     if not _company_default_cost_center(run.company):
         errors.append("Company default cost center is not set.")
 
@@ -41,13 +55,12 @@ def validate_run_config(run, rows: list[dict]) -> None:
         errors.append(
             "File contains Adjustment rows but 'Balance Adjustment Account' is not set on the run."
         )
-
-    if errors:
-        frappe.throw(
-            "Run configuration is incomplete:\n" + "\n".join(f"• {e}" for e in errors),
-            frappe.ValidationError,
-            title="RUN_CONFIG_MISSING",
+    if run.balance_adjustment_account and _account_is_group(run.balance_adjustment_account):
+        errors.append(
+            f"Balance Adjustment Account '{run.balance_adjustment_account}' is a Group account "
+            "and cannot be used in transactions. Select a leaf account instead."
         )
+    return errors
 
 
 def validate_rows_at_queue_time(rows: list[dict]) -> None:
@@ -85,33 +98,41 @@ def _validate_single_row(row: dict) -> None:
                    "Resolved account is missing; set it in the preview before queueing.")
             return
 
-    # INVALID_ACCOUNT_TYPE — resolved_account type must match route
-    if route in ("Sales Invoice",) and row.get("resolved_account"):
-        if not _account_is_type(row["resolved_account"], "Income"):
+    # GROUP_ACCOUNT — group accounts cannot be used in transactions
+    for acct_field in ("resolved_account", "resolved_erp_account", "resolved_external_account"):
+        acct = row.get(acct_field)
+        if acct and _account_is_group(acct):
+            _error(row, "GROUP_ACCOUNT",
+                   f"Account '{acct}' is a Group account and cannot be used in transactions. "
+                   "Select a leaf (posting) account instead.")
+            return
+
+    # INVALID_ACCOUNT_TYPE — resolved_account type must match transaction type
+    if row.get("resolved_account") and route == "Journal Entry":
+        txn_type = row.get("txn_type", "")
+        if txn_type == "Income" and not _account_is_type(row["resolved_account"], "Income"):
             _error(row, "INVALID_ACCOUNT_TYPE",
                    f"Account '{row['resolved_account']}' is not an Income account "
-                   f"(required for Sales Invoice).")
+                   "(required for Income rows).")
             return
-
-    if route in ("Purchase Invoice", "Journal Entry") and row.get("resolved_account"):
-        if not _account_is_type(row["resolved_account"], "Expense"):
+        if txn_type == "Expense" and not _account_is_type(row["resolved_account"], "Expense"):
             _error(row, "INVALID_ACCOUNT_TYPE",
                    f"Account '{row['resolved_account']}' is not an Expense account "
-                   f"(required for {route}).")
+                   "(required for Expense rows).")
             return
 
-    # PARTY_UNRESOLVED — SI/PI rows must have a party at queue time
-    if route in ("Sales Invoice", "Purchase Invoice"):
+    # PARTY_UNRESOLVED — only for categories marked requires_party
+    if row.get("requires_party"):
         if not row.get("resolved_party"):
             _error(row, "PARTY_UNRESOLVED",
-                   f"Party is required for {route} but has not been set. "
-                   "Add a per-row override or set a run-level default.")
+                   "This category requires a party but none has been set. "
+                   "Enter the party in the row or set a run-level default.")
             return
 
     # EXCHANGE_RATE_MISSING / EXCHANGE_RATE_INVALID
     src_cur  = row.get("source_currency", "")
     cmp_cur  = row.get("company_currency", "")
-    if src_cur != cmp_cur and txn_type not in ("Transfer", "External Transfer"):
+    if src_cur != cmp_cur and txn_type != "Transfer":
         exr = row.get("exchange_rate")
         if not exr:
             _error(row, "EXCHANGE_RATE_MISSING",
@@ -144,6 +165,14 @@ def _propagate_transfer_pair_errors(rows: list[dict]) -> None:
 
 
 # ── account type helper ────────────────────────────────────────────────────────
+
+def _account_is_group(account_name: str) -> bool:
+    """Return True if the account is a Group (cannot post transactions to it)."""
+    try:
+        return bool(frappe.get_cached_value("Account", account_name, "is_group"))
+    except Exception:
+        return False  # if lookup fails, allow through; ERPNext will surface it at posting
+
 
 def _account_is_type(account_name: str, root_type: str) -> bool:
     """Return True if the account's root_type matches (case-insensitive)."""

@@ -11,6 +11,7 @@ Run:  bench --site work.local run-tests --module cashew_integration.tests.test_p
 import hashlib
 import json
 
+import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from cashew_integration.importer.parser import (
@@ -125,13 +126,32 @@ class TestParserColumnMapping(FrappeTestCase):
             "account,amount,currency,title,note,date,income\n"   # missing category name etc.
             "Petty Cash,100.0,PKR,test,,2026-01-01 00:00:00,false\n"
         ).encode("utf-8")
-        with self.assertRaises(Exception):   # frappe.throw raises frappe.ValidationError
+        with self.assertRaises(frappe.ValidationError):
             parse_csv(bad_csv, "PKR")
 
     def test_empty_file_raises(self):
         empty = (HEADER).encode("utf-8")
-        with self.assertRaises(Exception):
+        with self.assertRaises(frappe.ValidationError):
             parse_csv(empty, "PKR")
+
+    def test_invalid_row_without_txn_type_does_not_crash_transfer_classifier(self):
+        # Missing date causes early row-level error before txn_type is populated.
+        bad_row = (
+            'Petty Cash,-120000.0,PKR,Saving,"Transferred Balance\nPetty Cash → Saving",'
+            ',false,null,Balance Correction,,0xff607d8b,charts.png,,,\n'
+        )
+        rows = parse_csv(_csv(bad_row), "PKR")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["validation_status"], "Error")
+        self.assertEqual(rows[0]["validation_error_code"], "MISSING_DATE")
+
+    def test_summary_export_raises_actionable_error(self):
+        summary_csv = (
+            "Row Labels,Sum of amount\n"
+            "Investment,-447850\n"
+        ).encode("utf-8")
+        with self.assertRaisesRegex(frappe.ValidationError, "summary/pivot export"):
+            parse_csv(summary_csv, "PKR")
 
     def test_row_idx_is_one_based(self):
         for i, row in enumerate(self.rows, start=1):
@@ -213,6 +233,24 @@ class TestParserHashCorrectness(FrappeTestCase):
         self.assertNotEqual(full_precision_hash, truncated_hash,
                             "Full-precision amount must produce a different hash than 2-decimal truncation.")
 
+    def test_hash_matches_income_row(self):
+        """hash(ROW_FREELANCE) matches the reference implementation for an income row."""
+        rows = parse_csv(_csv(ROW_FREELANCE), "PKR")
+        row = rows[0]
+        expected = self._reference_hash(
+            account="Petty Cash",
+            amount_float=42000.0,
+            currency="PKR",
+            date_str="2026-04-08",
+            income="true",
+            category="Freelance",
+            subcategory="",
+            title="March",
+            note="",
+        )
+        self.assertEqual(row["source_hash"], expected,
+                         "Income row hash must match reference implementation.")
+
     def test_different_rows_produce_different_hashes(self):
         rows = parse_csv(FULL_CSV.encode(), "PKR")
         valid_hashes = [r["source_hash"] for r in rows if r.get("source_hash")]
@@ -249,9 +287,18 @@ class TestParserBalanceCorrectionClassification(FrappeTestCase):
         for row in rows:
             self.assertEqual(row["txn_type"], "Transfer",
                              f"Row {row['row_idx']} should be Transfer, got {row['txn_type']}")
+        # Transfer rows must keep exchange_rate=None for the foreign leg; the
+        # implied rate is computed at posting time, not at parse/mapping time.
+        usd_leg = next(r for r in rows if r["source_currency"] == "USD")
+        pkr_leg = next(r for r in rows if r["source_currency"] == "PKR")
+        self.assertIsNone(usd_leg["exchange_rate"],
+                          "Foreign-currency Transfer leg must keep exchange_rate=None.")
+        self.assertEqual(pkr_leg["exchange_rate"], 1.0,
+                         "Same-currency Transfer leg keeps exchange_rate=1.0.")
 
     def test_external_transfer_when_partner_not_in_file(self):
-        """A single Balance Correction leg with no partner → External Transfer."""
+        """A single Balance Correction leg with no partner → External Transfer.
+        The foreign-currency leg must keep exchange_rate=None (rate computed at post time)."""
         solo_leg = (
             'NSave,-34.0,USD,NSave Transfer Out,'
             '"Transferred Balance\nNSave \u2192 ExternalBank",'  # ExternalBank not in file
@@ -259,6 +306,8 @@ class TestParserBalanceCorrectionClassification(FrappeTestCase):
         )
         rows = parse_csv(_csv(solo_leg), "PKR")
         self.assertEqual(rows[0]["txn_type"], "External Transfer")
+        self.assertIsNone(rows[0]["exchange_rate"],
+                          "Foreign-currency External Transfer must keep exchange_rate=None.")
 
     def test_balance_correction_without_paired_note_is_adjustment(self):
         """Balance Correction row with no 'Transferred Balance' note → Adjustment."""

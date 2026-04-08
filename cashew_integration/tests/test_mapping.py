@@ -17,6 +17,8 @@ from frappe.tests.utils import FrappeTestCase
 from cashew_integration.importer.mapping import (
     _build_account_map,
     _build_category_map,
+    _lookup_online_rate,
+    _lookup_erp_rate,
     _resolve_category,
     _resolve_erp_account,
     _resolve_party,
@@ -159,6 +161,8 @@ class TestCategoryMapping(FrappeTestCase):
         _resolve_category(row, self.cat_map)
         self.assertEqual(row["resolved_route"], "Sales Invoice")
         self.assertEqual(row["resolved_account"], "Service - CS")
+        self.assertEqual(row.get("resolved_income_account"), "Service - CS")
+        self.assertIsNone(row.get("resolved_expense_account"))
 
     def test_sub_category_fallback_to_empty_sub(self):
         """(category, unknown_sub) falls back to (category, '') mapping."""
@@ -257,6 +261,8 @@ class TestApplyMappingsFullPath(FrappeTestCase):
         self.assertEqual(row["resolved_erp_account"], "Cash - CS")
         self.assertEqual(row["resolved_route"], "Journal Entry")
         self.assertEqual(row["resolved_account"], "Entertainment Expenses - CS")
+        self.assertEqual(row.get("resolved_expense_account"), "Entertainment Expenses - CS")
+        self.assertIsNone(row.get("resolved_income_account"))
         self.assertEqual(row["validation_status"], "Valid")
 
     def test_income_row_resolved_with_customer(self):
@@ -282,3 +288,152 @@ class TestApplyMappingsFullPath(FrappeTestCase):
         self._run_mappings([row])
         self.assertIsNone(row["exchange_rate"],
                           "exchange_rate must stay None when ERP has no rate for the date.")
+
+    def test_foreign_currency_row_exchange_rate_prefilled_when_erp_rate_found(self):
+        """When _lookup_erp_rate returns a rate, exchange_rate and base_amount are set."""
+        row = _base_row(account="NSave", currency="USD", category="Freelance",
+                        txn_type="Income", amount=423.0)
+        row["exchange_rate"] = None
+        row["company_currency"] = "PKR"
+
+        settings = _make_settings()
+        with patch("cashew_integration.importer.mapping.frappe.get_single",
+                   return_value=settings), \
+             patch("cashew_integration.importer.mapping._lookup_erp_rate",
+                   return_value=280.5):
+            apply_mappings([row], _make_run())
+
+        self.assertEqual(row["exchange_rate"], 280.5,
+                         "exchange_rate must be set from ERP rate when one exists.")
+        self.assertAlmostEqual(row["base_amount"], round(423.0 * 280.5, 2),
+                               places=2,
+                               msg="base_amount must equal raw_amount * exchange_rate.")
+
+    def test_external_transfer_foreign_currency_prefills_exchange_rate(self):
+        row = _base_row(account="NSave", currency="USD", txn_type="External Transfer", amount=50.0)
+        row["note"] = "Transferred Balance\\nNSave → ExternalBank"
+        row["exchange_rate"] = None
+        row["company_currency"] = "PKR"
+
+        settings = _make_settings()
+        with patch("cashew_integration.importer.mapping.frappe.get_single", return_value=settings), \
+             patch("cashew_integration.importer.mapping._lookup_erp_rate", return_value=279.9):
+            apply_mappings([row], _make_run())
+
+        self.assertEqual(row["exchange_rate"], 279.9)
+        self.assertAlmostEqual(row["base_amount"], round(50.0 * 279.9, 2), places=2)
+
+
+class TestMappingFiltering(FrappeTestCase):
+    """Inactive mapping rows are excluded; unresolved categories are diagnosable."""
+
+    def test_inactive_account_row_excluded_from_map(self):
+        settings = MagicMock()
+        settings.cashew_account_mapping = [
+            MagicMock(cashew_account_name="Active",   erp_account="Cash - CS",
+                      account_currency="PKR", is_active=True),
+            MagicMock(cashew_account_name="Inactive", erp_account="Meezan Bank - CS",
+                      account_currency="PKR", is_active=False),
+        ]
+        m = _build_account_map(settings)
+        self.assertIn("Active", m,
+                      "Active account row must appear in the account map.")
+        self.assertNotIn("Inactive", m,
+                         "Inactive account row must be excluded from the account map.")
+
+    def test_inactive_category_row_excluded_from_map(self):
+        settings = MagicMock()
+        settings.cashew_category_mapping = [
+            MagicMock(cashew_category="Active Cat",   cashew_sub_category="",
+                      default_route="Journal Entry", default_account="X - CS",
+                      is_active=True),
+            MagicMock(cashew_category="Inactive Cat", cashew_sub_category="",
+                      default_route="Journal Entry", default_account="Y - CS",
+                      is_active=False),
+        ]
+        m = _build_category_map(settings)
+        self.assertIn(("Active Cat", ""), m,
+                      "Active category row must appear in the category map.")
+        self.assertNotIn(("Inactive Cat", ""), m,
+                         "Inactive category row must be excluded from the category map.")
+
+    def test_unresolved_category_leaves_route_and_account_unset(self):
+        """A category with no mapping leaves resolved_route/resolved_account unset.
+        The row stays Valid at mapping time; queue-time validation fires MAPPING_NOT_FOUND."""
+        row = _base_row(category="NoSuchCategory123", txn_type="Expense")
+        settings = _make_settings()
+        with patch("cashew_integration.importer.mapping.frappe.get_single",
+                   return_value=settings), \
+             patch("cashew_integration.importer.mapping._lookup_erp_rate",
+                   return_value=None):
+            apply_mappings([row], _make_run())
+
+        self.assertIsNone(row.get("resolved_route"),
+                          "Unknown category must leave resolved_route unset.")
+        self.assertIsNone(row.get("resolved_account"),
+                          "Unknown category must leave resolved_account unset.")
+        self.assertEqual(row["validation_status"], "Valid",
+                         "Mapping gaps surface at queue-time, not at mapping time.")
+
+
+class TestExchangeRateLookupFallbacks(FrappeTestCase):
+    """_lookup_erp_rate should fallback when for_buying is unavailable."""
+
+    @patch("erpnext.setup.utils.get_exchange_rate")
+    def test_lookup_falls_back_to_generic_rate(self, m_get_rate):
+        # first call: for_buying -> missing, second call: generic -> found
+        m_get_rate.side_effect = [None, 279.25]
+        rate = _lookup_erp_rate("USD", "PKR", "2026-04-09")
+        self.assertEqual(rate, 279.25)
+
+    @patch("erpnext.setup.utils.get_exchange_rate")
+    def test_lookup_falls_back_to_inverse_rate(self, m_get_rate):
+        # for_buying -> none, generic direct -> none, generic inverse -> found
+        m_get_rate.side_effect = [None, None, 0.0036]
+        rate = _lookup_erp_rate("USD", "PKR", "2026-04-09")
+        self.assertAlmostEqual(rate, round(1 / 0.0036, 10), places=10)
+
+    @patch("cashew_integration.importer.mapping._lookup_online_rate")
+    @patch("erpnext.setup.utils.get_exchange_rate")
+    def test_lookup_falls_back_to_online_rate(self, m_get_rate, m_online):
+        m_get_rate.side_effect = [None, None, None]
+        m_online.return_value = 281.4
+        rate = _lookup_erp_rate("USD", "PKR", "2026-04-09")
+        self.assertEqual(rate, 281.4)
+
+
+class TestOnlineRateLookup(FrappeTestCase):
+    @patch("cashew_integration.importer.mapping.requests.get")
+    @patch("cashew_integration.importer.mapping.frappe.cache")
+    def test_online_lookup_reads_provider_and_caches(self, m_cache_factory, m_get):
+        cache = MagicMock()
+        cache.get_value.return_value = None
+        m_cache_factory.return_value = cache
+
+        resp = MagicMock()
+        resp.json.return_value = {"rates": {"PKR": 279.77}}
+        resp.raise_for_status.return_value = None
+        m_get.return_value = resp
+
+        rate = _lookup_online_rate("USD", "PKR", "2026-04-09")
+        self.assertEqual(rate, 279.77)
+        cache.set_value.assert_called_once()
+
+    @patch("cashew_integration.importer.mapping.requests.get")
+    @patch("cashew_integration.importer.mapping.frappe.cache")
+    def test_online_lookup_uses_secondary_provider_when_primary_fails(self, m_cache_factory, m_get):
+        cache = MagicMock()
+        cache.get_value.return_value = None
+        m_cache_factory.return_value = cache
+
+        first_resp = MagicMock()
+        first_resp.raise_for_status.side_effect = Exception("primary down")
+
+        second_resp = MagicMock()
+        second_resp.raise_for_status.return_value = None
+        second_resp.json.return_value = {"rates": {"PKR": 278.11}}
+
+        m_get.side_effect = [first_resp, second_resp]
+
+        rate = _lookup_online_rate("USD", "PKR", "2026-04-09")
+        self.assertEqual(rate, 278.11)

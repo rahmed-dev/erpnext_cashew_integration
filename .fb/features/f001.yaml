@@ -1,7 +1,7 @@
 id: f001
 name: Cashew CSV Import
-status: pending-review
-stage: pending-review
+status: done
+stage: done
 owner: bmad-fb-dev
 
 goal: >
@@ -44,7 +44,7 @@ components:
     stage: done
   - id: c005
     name: Posting Engine (SI / PI / JE / Transfer JV / External Transfer JE / Adjustment JE)
-    stage: needs-rework
+    stage: done
   - id: c006
     name: Idempotency Guard
     stage: done

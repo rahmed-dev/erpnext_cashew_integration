@@ -1,20 +1,16 @@
 {
  "actions": [],
- "allow_import": 0,
  "allow_rename": 1,
- "creation": "2026-04-08 21:45:00.000000",
- "custom": 0,
+ "creation": "2026-04-08 21:45:00",
  "doctype": "DocType",
- "name": "Cashew Category Mapping",
- "module": "Cashew Integration",
  "document_type": "Document",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
   "cashew_category",
   "cashew_sub_category",
-  "default_route",
   "default_account",
+  "requires_party",
   "is_active"
  ],
  "fields": [
@@ -28,35 +24,43 @@
   {
    "fieldname": "cashew_sub_category",
    "fieldtype": "Data",
-   "label": "Sub Category",
-   "reqd": 0
-  },
-  {
-   "fieldname": "default_route",
-   "fieldtype": "Select",
-   "label": "Default Route",
-   "options": "Sales Invoice\nPurchase Invoice\nJournal Entry",
-   "reqd": 1
+   "in_list_view": 1,
+   "label": "Sub Category"
   },
   {
    "fieldname": "default_account",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Default Account",
+   "link_filters": "[[\"Account\",\"is_group\",\"=\",0]]",
    "options": "Account",
    "reqd": 1
   },
   {
+   "default": "0",
+   "fieldname": "requires_party",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Requires Party"
+  },
+  {
+   "default": "1",
    "fieldname": "is_active",
    "fieldtype": "Check",
-   "label": "Active",
-   "default": 1
+   "in_list_view": 1,
+   "label": "Active"
   }
  ],
- "idx": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-04-08 21:45:00.000000",
+ "modified": "2026-04-09 03:09:57.054860",
+ "modified_by": "Administrator",
+ "module": "Cashew Integration",
+ "name": "Cashew Category Mapping",
  "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
  "sort_field": "creation",
- "sort_order": "DESC"
+ "sort_order": "DESC",
+ "states": []
 }

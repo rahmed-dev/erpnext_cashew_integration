@@ -18,6 +18,26 @@ milestones:
     stage: dev-re-engagement
     result: pass
     note: f001 — Dev addressed all 4 review findings (c001 uniqueness, c002 income_flag validation, c005 txn_date rate lookup + transfer labels, c007 income_flag persistence). Dev gate passed. Advancing to Review.
+  - date: 2026-04-09
+    stage: dev-re-engagement-3
+    result: pass
+    note: f001 — Dev addressed c005 multi_currency=0 hardcoding. cmp_cur lookup + dynamic multi_curr computed; minor label extraction dedup. Dev gate passed. Advancing to Review for c005 only.
+  - date: 2026-04-09
+    stage: review
+    result: pass
+    note: f001 — All 9 components passed review. c005 pass-with-notes (3 minors only). Feature complete. Review gate passed.
+  - date: 2026-04-09
+    stage: dev-re-engagement-4
+    result: pass
+    note: f001 — Dev addressed c005 pass-with-notes minors (flags, comment, External Transfer + multi_currency tests). Dev gate passed. Advancing to Review for c005.
+  - date: 2026-04-09
+    stage: review
+    result: pass
+    note: f001 — Review pass 4; c005 clean pass. All components done. Review gate passed. Advancing to Doc.
+  - date: 2026-04-09
+    stage: dev-test-suite
+    result: pass
+    note: f001 — Dev addressed test-review findings (parser, mapping, integration). Dev gate passed. Advancing to Review for tests-* findings files.
 
 delivery: ~
 
