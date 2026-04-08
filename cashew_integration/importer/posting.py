@@ -14,7 +14,7 @@ Callers must wrap individual rows in try/except and record per-row failures.
 """
 
 import frappe
-from frappe.utils import flt, today
+from frappe.utils import flt
 
 
 # ── public dispatcher ──────────────────────────────────────────────────────────
@@ -178,7 +178,7 @@ def post_transfer_pair(source_row: dict, dest_row: dict, run) -> tuple[str, str]
         dst_base  = dst_amount
     else:
         src_exr, dst_exr, src_base, dst_base = _compute_implied_rates(
-            src_cur, dst_cur, cmp_cur, src_amount, dst_amount, run
+            src_cur, dst_cur, cmp_cur, src_amount, dst_amount, source_row["txn_date"]
         )
 
     imbalance = abs(dst_base - src_base)
@@ -187,8 +187,9 @@ def post_transfer_pair(source_row: dict, dest_row: dict, run) -> tuple[str, str]
         _mark_transfer_pair_imbalance(source_row, dest_row, imbalance, tolerance)
         return "", ""
 
-    src_name = _extract_account_name_from_note(source_row["note"], source_row["raw_account"])
-    dst_name = _extract_account_name_from_note(source_row["note"], dest_row["raw_account"])
+    src_name, dst_name = _extract_transfer_labels(
+        source_row["note"], source_row["raw_account"], dest_row["raw_account"]
+    )
 
     je = frappe.get_doc({
         "doctype":           "Journal Entry",
@@ -226,7 +227,7 @@ def post_transfer_pair(source_row: dict, dest_row: dict, run) -> tuple[str, str]
     return "Journal Entry", je.name
 
 
-def _compute_implied_rates(src_cur, dst_cur, cmp_cur, src_amount, dst_amount, run):
+def _compute_implied_rates(src_cur, dst_cur, cmp_cur, src_amount, dst_amount, txn_date):
     """Compute implied exchange rates ensuring the JV balances in company currency."""
     if dst_cur == cmp_cur:
         dst_base    = dst_amount
@@ -241,9 +242,9 @@ def _compute_implied_rates(src_cur, dst_cur, cmp_cur, src_amount, dst_amount, ru
         dst_base    = round(dst_amount * implied, 2)
         dst_exr     = implied
     else:
-        # Both foreign: convert dest via ERP rate
+        # Both foreign: convert dest via ERP rate on the transaction date
         from cashew_integration.importer.mapping import _lookup_erp_rate
-        dst_erp_rate = _lookup_erp_rate(dst_cur, cmp_cur, run.posting_date or today()) or 1.0
+        dst_erp_rate = _lookup_erp_rate(dst_cur, cmp_cur, txn_date) or 1.0
         dst_base     = round(dst_amount * dst_erp_rate, 2)
         dst_exr      = dst_erp_rate
         implied      = dst_base / src_amount
@@ -264,12 +265,13 @@ def _mark_transfer_pair_imbalance(source_row, dest_row, imbalance, tolerance):
         r["validation_error_message"] = msg
 
 
-def _extract_account_name_from_note(note: str, fallback: str) -> str:
+def _extract_transfer_labels(note: str, source_fallback: str, dest_fallback: str) -> tuple[str, str]:
+    """Return (source_label, dest_label) extracted from a Transferred Balance note."""
     import re
     m = re.match(r"^Transferred Balance\n(.+)\s→\s(.+)$", note, re.DOTALL)
     if m:
-        return f"{m.group(1).strip()} → {m.group(2).strip()}"
-    return fallback
+        return m.group(1).strip(), m.group(2).strip()
+    return source_fallback, dest_fallback
 
 
 # ── 5. External Transfer JE ────────────────────────────────────────────────────

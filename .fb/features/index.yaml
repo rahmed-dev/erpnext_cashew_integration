@@ -1,8 +1,8 @@
 features:
   - id: f001
     name: Cashew CSV Import
-    status: ready-for-dev
-    stage: td-complete
+    status: needs-rework
+    stage: needs-rework
     priority: high
   - id: f002
     name: Cashew Automated Sync

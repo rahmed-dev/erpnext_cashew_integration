@@ -10,6 +10,14 @@ milestones:
     stage: td
     result: pass
     note: f001 technical spec approved and handed off to Dev with explicit accrual/cash resolution and default-party strategy.
+  - date: 2026-04-09
+    stage: dev
+    result: pass
+    note: f001 — all components pending-review; manual verification and automated tests documented in pipeline summary.
+  - date: 2026-04-09
+    stage: dev-re-engagement
+    result: pass
+    note: f001 — Dev addressed all 4 review findings (c001 uniqueness, c002 income_flag validation, c005 txn_date rate lookup + transfer labels, c007 income_flag persistence). Dev gate passed. Advancing to Review.
 
 delivery: ~
 

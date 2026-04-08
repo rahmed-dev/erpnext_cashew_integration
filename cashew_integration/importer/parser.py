@@ -159,6 +159,12 @@ def _parse_single_row(idx: int, raw: dict, company_currency: str) -> dict:
     row["source_currency"] = (raw.get("currency") or "").strip()
     row["company_currency"] = company_currency
     row["income_flag"] = (raw.get("income") or "").strip().lower()
+    if row["income_flag"] not in {"true", "false"}:
+        return _error(
+            row,
+            "INVALID_INCOME_FLAG",
+            f"Income flag '{row['income_flag']}' is invalid; must be 'true' or 'false'.",
+        )
 
     # ── item_label ─────────────────────────────────────────────────────────────
     row["item_label"] = f"{category} | {row['month_key']}"

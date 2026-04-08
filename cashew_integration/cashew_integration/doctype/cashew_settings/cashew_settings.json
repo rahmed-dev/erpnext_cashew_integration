@@ -8,10 +8,17 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "company",
   "cashew_account_mapping",
   "cashew_category_mapping"
  ],
  "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Default Company",
+   "options": "Company"
+  },
   {
    "fieldname": "cashew_account_mapping",
    "fieldtype": "Table",

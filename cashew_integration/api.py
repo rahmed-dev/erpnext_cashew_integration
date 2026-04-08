@@ -182,7 +182,7 @@ def _read_attached_file(file_url: str) -> bytes:
 
 def _dict_to_child(row: dict, child) -> None:
     """Copy flat row dict fields onto a child doc, skipping private keys."""
-    skip = {"income_flag", "_note_type", "_transfer_source_name", "_transfer_dest_name"}
+    skip = {"_note_type", "_transfer_source_name", "_transfer_dest_name"}
     for k, v in row.items():
         if k.startswith("_") or k in skip:
             continue
@@ -195,7 +195,4 @@ def _dict_to_child(row: dict, child) -> None:
 def _child_to_dict(child_row) -> dict:
     """Convert a child doc to a plain dict for the validation/idempotency engines."""
     fields = [f.fieldname for f in child_row.meta.fields]
-    d = {f: child_row.get(f) for f in fields}
-    # income_flag is not stored on the child; re-derive from txn_type for
-    # Transfer pair orientation (only needed if worker re-reads rows)
-    return d
+    return {f: child_row.get(f) for f in fields}

@@ -32,31 +32,31 @@ acceptance_notes:
 components:
   - id: c001
     name: Data Model (Cashew Settings singleton with Account+Category child tables, Import Run, Import Row)
-    stage: pending-review
+    stage: done
   - id: c002
     name: CSV Parser + Normalizer (column mapping, datetime, hash, Balance Correction classification + pairing)
-    stage: pending-review
+    stage: done
   - id: c003
     name: Mapping + Preview Override Engine (account, category, exchange rate, run-default party)
-    stage: pending-review
+    stage: done
   - id: c004
     name: Validation Engine
-    stage: pending-review
+    stage: done
   - id: c005
     name: Posting Engine (SI / PI / JE / Transfer JV / External Transfer JE / Adjustment JE)
-    stage: pending-review
+    stage: needs-rework
   - id: c006
     name: Idempotency Guard
-    stage: pending-review
+    stage: done
   - id: c007
     name: Async Worker + Progress Polling
-    stage: pending-review
+    stage: done
   - id: c008
     name: Diagnostics CSV
-    stage: pending-review
+    stage: done
   - id: c009
     name: Install-Time Setup (Cashew Settings singleton, item, custom fields)
-    stage: pending-review
+    stage: done
 
 test_requirements:
   automated: true

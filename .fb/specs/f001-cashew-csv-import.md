@@ -52,6 +52,8 @@
 Non-submittable singleton. Accessed via `frappe.get_single("Cashew Settings")`.
 No `company` field — configuration is global; company scoping happens at the run level.
 
+> **Later change (post-review):** A `company` (Link Company, optional) field was added to `Cashew Settings` as a convenience default. It is not used by any engine logic; its sole purpose is to pre-fill the `company` field on new Import Runs. All runtime lookups (currency, accounts, cost centre) continue to read from `run.company`.
+
 Contains two child tables:
 
 #### Child Table 1: `Cashew Account Mapping`
@@ -685,7 +687,7 @@ Accountant cannot delete a `Cashew Import Run` once `status != Draft` (enforced 
 8. Every SI and PI gets a linked Payment Entry by default (`auto_settle_cash = true`); AR/AP aging shows zero open balance on imported invoices.
 9. Re-running the same file does not create duplicates; duplicates appear in diagnostics with original doc reference.
 10. PKR and USD rows import with correct exchange-rate handling; ERP rate is a suggestion only — accountant confirms actual rate in preview.
-11. All mapping config is maintained in `Cashew Settings` (one place); no company field on config rows; `company` exists only on the run.
+11. All mapping config is maintained in `Cashew Settings` (one place); no company field on config rows; `company` exists only on the run. *(Later change: an optional `Default Company` field was added to `Cashew Settings` for UI convenience — it does not affect engine behaviour.)*
 12. A failed run re-queues safely; idempotency skips already-posted rows.
 13. Diagnostics CSV covers every row: route, outcome, error code, review flag.
 
