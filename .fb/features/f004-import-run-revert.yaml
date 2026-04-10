@@ -1,0 +1,112 @@
+id: f004
+name: Import Run Revert
+status: working
+stage: working
+owner: null
+
+goal: >
+  Allow a completed or partially-completed import run to be fully reversed:
+  every posted SI/PI/JE is cancelled in the ERP, row revert status is tracked
+  per-row, and the run surfaces a clean summary of what was reversed vs what
+  needs manual action.
+
+problem: >
+  Current cancel_run only stops the async worker. It does not touch already-posted
+  ERP documents. Users who need to undo an import must manually locate and cancel
+  each SI/PI/JE — tedious and error-prone, especially for large files. A
+  partially-posted run (e.g. worker cancelled mid-way) has no recovery path at all.
+
+user_stories:
+  - As an accountant, I can trigger a revert on any Completed or partially-posted
+    run and have all posted SI/PI/JE cancelled automatically.
+  - As an accountant, I can see which rows were successfully reversed and which
+    require manual action (e.g. payment already linked), so I know exactly what
+    is left to clean up.
+  - As an accountant, re-running revert on an already-partially-reverted run is
+    safe — already-cancelled docs are skipped, only outstanding rows are retried.
+  - As an accountant, the idempotency guard in future runs correctly ignores rows
+    whose posted doc has been cancelled — so I can re-import after reverting.
+
+acceptance_notes:
+  - New API endpoint: revert_run(run_name). Allowed on status Completed,
+    Cancelled, or Revert-Failed. Sets status to Reverting and enqueues worker.
+  - New statuses on Cashew Import Run: Reverting, Reverted, Revert-Failed.
+  - New field on Cashew Import Row: revert_status (values: null / Reverted /
+    Revert-Failed / Skipped). revert_error stores the failure message.
+  - Async revert worker iterates rows where posted_docname is not null and
+    revert_status is not Reverted. For each:
+      - Load the ERP doc. If docstatus == 2 (already cancelled): mark Reverted, skip.
+      - Call doc.cancel(). On success: mark Reverted, clear posted_docname.
+      - On exception (linked payment, amended, etc.): mark Revert-Failed, store error.
+  - After all rows processed: if any Revert-Failed rows remain → run status
+    Revert-Failed; else → Reverted.
+  - Progress flushed periodically (same interval as import worker).
+  - Idempotency guard (c006) updated: treat rows whose posted doc has docstatus==2
+    as not-posted (do not mark Skipped on re-import after revert).
+  - DocType schema changes: two new fields on Cashew Import Row (revert_status,
+    revert_error); two new status options on Cashew Import Run status select.
+  - on_trash guard on Cashew Import Run updated: allow deletion of Reverted runs.
+  - No cascade to amended documents — if a doc was amended post-import, revert
+    fails that row with a clear message; user handles manually.
+  - Permissions: same as import — Accountant can trigger revert on their runs.
+
+components:
+  - id: f004-c001
+    name: DocType schema — new statuses on Import Run, revert fields on Import Row
+    type: schema
+    stage: done
+    notes: >
+      posted_doctype (Data→Select), posted_docname (Data→Dynamic Link),
+      Reverting/Reverted/Revert-Failed statuses on Import Run,
+      revert_status + revert_error fields on Import Row — all done.
+    files:
+      - cashew_integration/cashew_integration/doctype/cashew_import_run/cashew_import_run.json
+      - cashew_integration/cashew_integration/doctype/cashew_import_row/cashew_import_row.json
+
+  - id: f004-c002
+    name: revert_run API endpoint + enqueue helper
+    type: backend
+    stage: done
+    files:
+      - cashew_integration/api.py
+
+  - id: f004-c003
+    name: Async revert worker (process_revert)
+    type: backend
+    stage: done
+    files:
+      - cashew_integration/importer/worker.py
+
+  - id: f004-c004
+    name: Idempotency guard update — skip check for cancelled docs
+    type: backend
+    stage: done
+    notes: >
+      No code change needed. _fetch_posted_hashes filters posted_docname IS NOT NULL
+      (cleared on revert). _fetch_erp_document_hashes already uses docstatus=1,
+      excluding cancelled docs. Re-import after revert works correctly as-is.
+    files:
+      - cashew_integration/importer/idempotency.py
+
+  - id: f004-c005
+    name: on_trash guard update — allow deletion of Reverted runs
+    type: backend
+    stage: done
+    files:
+      - cashew_integration/cashew_integration/doctype/cashew_import_run/cashew_import_run.py
+
+  - id: f004-c006
+    name: tests — revert happy path, partial revert, idempotent re-revert
+    type: test
+    stage: not-started
+    files:
+      - cashew_integration/tests/test_integration.py
+
+open_questions:
+  - Should revert be available on Validated/Imported runs (no posted docs)?
+    Likely yes — just mark Reverted immediately with 0 reversals. TBD.
+  - Should get_run_progress cover revert progress too, or separate endpoint?
+    Simplest: reuse get_run_progress (rows_posted counts down as rows are reverted).
+
+depends_on:
+  - f001

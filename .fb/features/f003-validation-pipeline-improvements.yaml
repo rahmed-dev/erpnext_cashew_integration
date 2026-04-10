@@ -1,0 +1,64 @@
+id: f003
+name: Validation Pipeline Improvements
+status: working
+stage: working
+owner: null
+
+goal: >
+  Move idempotency guard and run-level config validation into the user-driven
+  validate step so users can see duplicates and config errors before any rows
+  are posted to the ERP — eliminating the need to clean up partially-imported
+  data.
+
+problem: >
+  Currently, apply_idempotency_guard runs only in the async worker, and
+  validate_run_config throws at queue_run time. Both happen after the user has
+  already clicked "queue" — and since the worker posts row-by-row, some rows
+  may be posted before an error surfaces. Users are left with partially-imported
+  data they must manually reverse.
+
+user_stories:
+  - As an accountant, I can see which rows are already-posted duplicates during
+    the validate step, before I queue the run, so I can review or abort cleanly.
+  - As an accountant, I am warned about missing run-level config (e.g. missing
+    balance adjustment account) during validate — not after queuing — so I can
+    fix it without touching the ERP.
+  - As an accountant, the validate step gives me a complete picture of the run
+    outcome (valid, error, skipped/duplicate) so my queue decision is fully
+    informed.
+
+acceptance_notes:
+  - validate_import (api.py) calls apply_idempotency_guard before returning,
+    marking duplicate rows as Skipped in the child table.
+  - validate_import returns run_config_errors list (non-throwing, using
+    get_run_config_errors) so frontend can surface config warnings alongside
+    row errors.
+  - Worker retains both checks (idempotency + config) — race condition safety:
+    another run may complete between validate and queue.
+  - No schema changes required. No new DocTypes.
+  - Existing test suite (test_integration.py) covers the happy path; a new test
+    should verify that duplicate rows are marked Skipped at validate time.
+
+components:
+  - id: f003-c001
+    name: validate_import — add idempotency guard call
+    type: backend
+    stage: done
+    files:
+      - cashew_integration/api.py
+  - id: f003-c002
+    name: validate_import — surface run_config_errors in response
+    type: backend
+    stage: done
+    notes: was already implemented; confirmed present in both response paths.
+    files:
+      - cashew_integration/api.py
+  - id: f003-c003
+    name: test — validate-time idempotency
+    type: test
+    stage: not-started
+    files:
+      - cashew_integration/tests/test_integration.py
+
+depends_on:
+  - f001

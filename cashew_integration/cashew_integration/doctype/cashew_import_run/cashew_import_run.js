@@ -5,7 +5,7 @@ frappe.ui.form.on("Cashew Import Run", {
 
 	refresh(frm) {
 		_update_buttons(frm);
-		if (["Queued", "Processing"].includes(frm.doc.status)) {
+		if (["Queued", "Processing", "Reverting"].includes(frm.doc.status)) {
 			_start_progress_polling(frm);
 		}
 	},
@@ -60,42 +60,70 @@ frappe.ui.form.on("Cashew Import Run", {
 					: "";
 
 				if (m.status === "validated") {
-					frappe.show_alert({
-						message: __("Validation passed — {0} valid rows.", [m.rows_valid]),
+					const parts = [];
+					parts.push(`<b>${__("Result")}</b>`);
+					parts.push(`<ul><li>${__("{0} rows passed validation.", [m.rows_valid])}</li></ul>`);
+					if (fxLine) {
+						parts.push(`<b>${__("Exchange Rates")}</b>`);
+						parts.push(`<ul><li>${fxLine}</li></ul>`);
+					}
+					frappe.msgprint({
+						title: __("Validation Passed"),
+						message: parts.join(""),
 						indicator: "green",
 					});
-					if (fxLine) {
-						frappe.show_alert({ message: fxLine, indicator: "blue" });
-					}
 				} else {
-					const cfg = (m.run_config_errors || []).length;
-					const fxErr = m.fx_error_count || 0;
-					let msg = __("Validation issues — {0} row errors, {1} FX missing, {2} config issues.", [m.rows_failed || 0, fxErr, cfg]);
-					if (fxLine) msg += "<br>" + fxLine;
-					frappe.show_alert({ message: msg, indicator: "orange" });
+					const cfg    = m.run_config_errors || [];
+					const fxErr  = m.fx_error_count || 0;
+					const pairs  = fx.missing_pairs || [];
+					const parts  = [];
 
+					// ── Summary ───────────────────────────────────────────────
+					parts.push(`<b>${__("Summary")}</b>`);
+					parts.push("<ul>");
+					parts.push(`<li>${__("{0} row(s) have errors.", [m.rows_failed || 0])}</li>`);
+					if (fxErr)      parts.push(`<li>${__("{0} row(s) missing exchange rate.", [fxErr])}</li>`);
+					if (cfg.length) parts.push(`<li>${__("{0} configuration issue(s).", [cfg.length])}</li>`);
+					parts.push("</ul>");
+
+					// ── Row error breakdown ───────────────────────────────────
 					if (m.error_code_counts && Object.keys(m.error_code_counts).length) {
-						const lines = Object.entries(m.error_code_counts)
-							.map(([code, count]) => `<b>${code}</b>: ${count}`)
-							.join("<br>");
-						const cfgLines = (m.run_config_errors || []).map(e => `• ${e}`).join("<br>");
-
-						// Show which exact Currency Exchange records are missing
-						const pairs = (fx.missing_pairs || []);
-						const pairsHtml = pairs.length
-							? "<br><br><b>Missing Currency Exchange records:</b><br>" +
-							  pairs.map(p => `• ${p.from} → ${p.to} on ${p.date}`).join("<br>") +
-							  `<br><br><i>Create these in <b>ERPNext → Accounting → Currency Exchange</b>, then click Validate Import again.</i>`
-							: "";
-
-						frappe.msgprint({
-							title: __("Validation Error Breakdown"),
-							message: lines
-								+ (cfgLines ? "<br><br><b>Config errors:</b><br>" + cfgLines : "")
-								+ pairsHtml,
-							indicator: "orange",
+						parts.push(`<b>${__("Row Errors")}</b>`);
+						parts.push("<ul>");
+						Object.entries(m.error_code_counts).forEach(([code, count]) => {
+							parts.push(`<li><code>${code}</code> — ${count} row(s)</li>`);
 						});
+						parts.push("</ul>");
 					}
+
+					// ── Config errors ─────────────────────────────────────────
+					if (cfg.length) {
+						parts.push(`<b>${__("Configuration Errors")}</b>`);
+						parts.push("<ul>");
+						cfg.forEach(e => parts.push(`<li>${e}</li>`));
+						parts.push("</ul>");
+					}
+
+					// ── Missing FX records ────────────────────────────────────
+					if (pairs.length) {
+						parts.push(`<b>${__("Missing Currency Exchange Records")}</b>`);
+						parts.push("<ul>");
+						pairs.forEach(p => parts.push(`<li>${p.from} → ${p.to} &nbsp;<i>(${p.date})</i></li>`));
+						parts.push("</ul>");
+						parts.push(`<i>${__("Create these under ERPNext → Accounting → Currency Exchange, then click Validate Import again.")}</i>`);
+					}
+
+					// ── FX summary ────────────────────────────────────────────
+					if (fxLine) {
+						parts.push(`<br><b>${__("Exchange Rates")}</b>`);
+						parts.push(`<ul><li>${fxLine}</li></ul>`);
+					}
+
+					frappe.msgprint({
+						title: __("Validation Issues"),
+						message: parts.join(""),
+						indicator: "orange",
+					});
 				}
 				frm.reload_doc();
 			},
@@ -137,14 +165,14 @@ function _update_buttons(frm) {
 	const s = frm.doc.status;
 
 	// Parse & Preview: available in Draft/Imported/Validated (re-parse)
-	if (["Draft", "Imported", "Validated"].includes(s)) {
+	if (["Draft", "Parsed", "Validated"].includes(s)) {
 		frm.add_custom_button(__("Parse & Preview"), () => {
 			frm.trigger("_parse_and_preview");
 		}).addClass("btn-primary");
 	}
 
 	// Validate Import: strict checks before queueing
-	if (s === "Imported") {
+	if (s === "Parsed") {
 		frm.add_custom_button(__("Validate Import"), () => {
 			frm.trigger("_validate_import");
 		}).addClass("btn-warning");
@@ -175,6 +203,33 @@ function _update_buttons(frm) {
 									indicator: "orange",
 								});
 								frm.reload_doc();
+							}
+						},
+					});
+				}
+			);
+		}).addClass("btn-danger");
+	}
+
+	// Revert Run: cancel all posted ERP docs for completed/failed/cancelled runs
+	if (["Completed", "Failed", "Cancelled", "Revert-Failed"].includes(s)) {
+		frm.add_custom_button(__("Revert Run"), () => {
+			frappe.confirm(
+				__("This will cancel all posted Sales Invoices, Purchase Invoices, and Journal Entries for this run. Continue?"),
+				() => {
+					frm.call({
+						method: "cashew_integration.api.revert_run",
+						args: { run_name: frm.doc.name },
+						freeze: true,
+						freeze_message: __("Submitting revert request…"),
+						callback(r) {
+							if (r.message) {
+								frappe.show_alert({
+									message: __("Revert started — ERP documents are being cancelled."),
+									indicator: "orange",
+								});
+								frm.reload_doc();
+								_start_progress_polling(frm);
 							}
 						},
 					});

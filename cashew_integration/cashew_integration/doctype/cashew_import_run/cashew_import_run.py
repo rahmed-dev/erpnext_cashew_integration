@@ -5,8 +5,10 @@ from frappe.model.document import Document
 class CashewImportRun(Document):
 
     def on_trash(self):
-        if self.status != "Draft":
+        _DELETABLE_STATUSES = {"Draft", "Reverted"}
+        if self.status not in _DELETABLE_STATUSES:
             frappe.throw(
-                f"Cannot delete Import Run {self.name} once it has been started (status: {self.status}).",
+                f"Cannot delete Import Run {self.name} with status '{self.status}'. "
+                "Only Draft or fully Reverted runs can be deleted.",
                 frappe.PermissionError,
             )

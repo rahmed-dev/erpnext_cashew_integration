@@ -2,10 +2,15 @@
 C007 — Async Worker + Progress Polling
 
 ``process_run`` is the function enqueued via ``frappe.enqueue``.
+``process_revert`` cancels all posted ERP documents for a completed run.
 
-Flow:
+Import flow:
   Draft → Queued  (set before enqueue by the API)
   Queued → Processing → Completed | Failed
+
+Revert flow:
+  Completed | Failed | Cancelled | Revert-Failed → Reverting (set by API)
+  Reverting → Reverted | Revert-Failed
 
 Progress is flushed to the run document every N rows (default 20, or site
 config key ``cashew_progress_interval``).
@@ -188,6 +193,120 @@ def _process(run_name: str) -> None:
                          f"Cashew Diagnostics CSV Error: run={run.name}")
 
     final_status = "Failed" if failed > 0 else "Completed"
+    run.db_set("status",      final_status, notify=True)
+    run.db_set("finished_on", now(),        notify=True)
+    frappe.db.commit()
+
+
+# ── revert: enqueue helper ────────────────────────────────────────────────────
+
+def enqueue_revert(run_name: str) -> str:
+    """Enqueue the revert worker and return the job ID."""
+    job = frappe.enqueue(
+        "cashew_integration.importer.worker.process_revert",
+        run_name=run_name,
+        queue="long",
+        timeout=3600,
+        enqueue_after_commit=True,
+    )
+    return getattr(job, "id", "")
+
+
+# ── revert: worker entry point ────────────────────────────────────────────────
+
+def process_revert(run_name: str) -> None:
+    """
+    Revert worker.  Called by the RQ worker process.
+    Cancels every posted SI/PI/JE recorded on the run's rows.
+    """
+    try:
+        _revert(run_name)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), f"Cashew Revert Failed: {run_name}")
+        run = frappe.get_doc("Cashew Import Run", run_name)
+        run.db_set("status",      "Revert-Failed", notify=True)
+        run.db_set("finished_on", now(),            notify=True)
+        frappe.db.commit()
+        raise
+
+
+def _revert(run_name: str) -> None:
+    run = frappe.get_doc("Cashew Import Run", run_name)
+
+    if run.status != "Reverting":
+        frappe.throw(f"Run {run_name} is not in Reverting status (current: {run.status}).")
+
+    progress_interval = int(frappe.conf.get("cashew_progress_interval", 20))
+
+    # Load only rows that have a posted document and haven't been successfully reverted yet.
+    rows = frappe.get_all(
+        "Cashew Import Row",
+        filters={"parent": run_name, "posted_docname": ["!=", ""]},
+        fields=["name", "row_idx", "posted_doctype", "posted_docname", "revert_status"],
+        order_by="row_idx asc",
+    )
+
+    reverted = failed = 0
+
+    for i, row in enumerate(rows):
+        # Idempotent: already-reverted rows from a previous partial run are skipped.
+        if row.get("revert_status") == "Reverted":
+            reverted += 1
+            continue
+
+        doctype = row.get("posted_doctype")
+        docname = row.get("posted_docname")
+
+        if not doctype or not docname:
+            continue
+
+        try:
+            doc = frappe.get_doc(doctype, docname)
+
+            if doc.docstatus == 2:
+                # Already cancelled externally — treat as success.
+                frappe.db.set_value("Cashew Import Row", row["name"], {
+                    "revert_status": "Reverted",
+                    "revert_error":  None,
+                    "posted_doctype": None,
+                    "posted_docname": None,
+                })
+                reverted += 1
+
+            elif doc.docstatus == 1:
+                doc.cancel()
+                frappe.db.set_value("Cashew Import Row", row["name"], {
+                    "revert_status": "Reverted",
+                    "revert_error":  None,
+                    "posted_doctype": None,
+                    "posted_docname": None,
+                })
+                reverted += 1
+
+            else:
+                frappe.db.set_value("Cashew Import Row", row["name"], {
+                    "revert_status": "Revert-Failed",
+                    "revert_error":  f"{doctype} {docname} is in Draft status — cannot cancel.",
+                })
+                failed += 1
+
+        except Exception as exc:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Cashew Revert Row Error: run={run_name} doc={docname}",
+            )
+            frappe.db.set_value("Cashew Import Row", row["name"], {
+                "revert_status": "Revert-Failed",
+                "revert_error":  str(exc)[:500],
+            })
+            failed += 1
+
+        if (i + 1) % progress_interval == 0:
+            frappe.db.commit()
+
+    frappe.db.commit()
+
+    final_status = "Revert-Failed" if failed > 0 else "Reverted"
     run.db_set("status",      final_status, notify=True)
     run.db_set("finished_on", now(),        notify=True)
     frappe.db.commit()

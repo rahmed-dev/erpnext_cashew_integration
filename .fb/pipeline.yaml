@@ -1,7 +1,8 @@
-stage: complete
+stage: done
 feature: f001
-assigned_to: bmad-fb-orch
-status: awaiting-gate
+assigned_to: ~
+status: gate-passed
+doc_skip_rationale: User declined doc stage. Quick mode — manual testing in progress alongside code changes.
 summary: |
   Review pass complete after test-suite re-engagement.
 
@@ -28,11 +29,13 @@ manual_verification:
 
 test_status: passed
 gate_result: |
-  Dev gate — PASS (test suite re-engagement).
-  All components done. Manual verification lists migrate + test_parser,
-  test_mapping, test_integration. test_status: passed. Summary maps each
-  cited test-review finding to concrete changes (integration routes, mapping
-  ERP-rate + filtering, parser exchange_rate + ValidationError + income hash).
-  Advancing to Review. Scope: refresh .fb/reviews/f001/tests-c002-parser-findings.md,
-  tests-c003-mapping-findings.md, tests-c005-integration-findings.md (on-disk
-  verdicts still pre-fix; Review verifies against code).
+  Review gate — PASS (2026-04-11).
+  All 9 component findings files present. No critical or major findings open
+  across any component (c006 has 1 minor: dead variable all_hashes — not a
+  blocker). Three test-suite review files all pass; tests confirmed diagnostic
+  (exchange-rate behavior, error-path ValidationError, hash assertions, all
+  six posting routes). All components at stage: done in f001.yaml. Manual
+  verification steps listed (migrate + test_parser/mapping/integration).
+  Corrected: pipeline stage was non-standard "complete" → "doc".
+  Corrected: index.yaml f001 status synced from needs-rework → done.
+  Advancing to doc stage.

@@ -43,7 +43,9 @@
   "posted_doctype",
   "posted_docname",
   "posted_gl_date",
-  "is_duplicate"
+  "is_duplicate",
+  "revert_status",
+  "revert_error"
  ],
  "fields": [
   {
@@ -288,16 +290,18 @@
   },
   {
    "fieldname": "posted_doctype",
-   "fieldtype": "Data",
+   "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Posted DocType",
+   "options": "\nSales Invoice\nPurchase Invoice\nJournal Entry",
    "read_only": 1
   },
   {
    "fieldname": "posted_docname",
-   "fieldtype": "Data",
+   "fieldtype": "Dynamic Link",
    "in_list_view": 1,
-   "label": "Posted Docname",
+   "label": "Posted Document",
+   "options": "posted_doctype",
    "read_only": 1
   },
   {
@@ -312,11 +316,25 @@
    "fieldtype": "Check",
    "label": "Duplicate",
    "read_only": 1
+  },
+  {
+   "fieldname": "revert_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Revert Status",
+   "options": "\nReverted\nRevert-Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revert_error",
+   "fieldtype": "Small Text",
+   "label": "Revert Error",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-04-09 02:05:24.087592",
+ "modified": "2026-04-11 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cashew Integration",
  "name": "Cashew Import Row",

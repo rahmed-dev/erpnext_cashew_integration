@@ -7,7 +7,9 @@ Endpoints:
   validate_import(run_name)       — run strict validation on imported rows
   queue_run(run_name)             — validate at queue time, enqueue the worker
   cancel_run(run_name)            — cancel a queued/processing run
+  revert_run(run_name)            — cancel all posted ERP docs for a completed run
   get_run_progress(run_name)      — return live counters for the progress bar
+  setup_from_csv(company, file_url) — seed Cashew Settings from a Cashew CSV export
 """
 
 import frappe
@@ -22,7 +24,7 @@ from cashew_integration.importer.validation import (
     get_run_config_errors,
 )
 from cashew_integration.importer.idempotency import apply_idempotency_guard
-from cashew_integration.importer.worker import enqueue_run
+from cashew_integration.importer.worker import enqueue_run, enqueue_revert
 
 
 # ── parse + preview ────────────────────────────────────────────────────────────
@@ -34,7 +36,7 @@ def parse_and_preview(run_name: str) -> dict:
     2. Parse and normalise all rows.
     3. Apply account/category/exchange-rate/party mappings.
     4. Save rows to the Cashew Import Row child table.
-    5. Update run counters and status → Imported.
+    5. Update run counters and status → Parsed.
     6. Return a summary dict suitable for the frontend preview.
 
     Permission: Accountant or System Manager.
@@ -42,10 +44,10 @@ def parse_and_preview(run_name: str) -> dict:
     run = frappe.get_doc("Cashew Import Run", run_name)
     frappe.has_permission("Cashew Import Run", doc=run, throw=True)
 
-    if run.status not in ("Draft", "Imported", "Validated"):
+    if run.status not in ("Draft", "Parsed", "Validated"):
         frappe.throw(
             f"Cannot re-parse a run with status '{run.status}'. "
-            "Only Draft, Imported, or Validated runs can be re-parsed.",
+            "Only Draft, Parsed, or Validated runs can be re-parsed.",
             frappe.PermissionError,
         )
 
@@ -70,7 +72,7 @@ def parse_and_preview(run_name: str) -> dict:
     run.rows_failed = sum(1 for r in rows if r.get("validation_status") == "Error")
     run.rows_skipped = 0
     run.rows_posted = 0
-    run.status = "Imported"
+    run.status = "Parsed"
     run.save(ignore_permissions=False)
     frappe.db.commit()
 
@@ -89,15 +91,15 @@ def validate_import(run_name: str) -> dict:
     """
     Run strict validation on imported rows.
 
-    - If all checks pass, status transitions Imported -> Validated.
-    - If row/config errors exist, status remains Imported and details are returned.
+    - If all checks pass, status transitions Parsed -> Validated.
+    - If row/config errors exist, status remains Parsed and details are returned.
     """
     run = frappe.get_doc("Cashew Import Run", run_name)
     frappe.has_permission("Cashew Import Run", doc=run, throw=True)
 
-    if run.status not in ("Imported", "Validated"):
+    if run.status not in ("Parsed", "Validated"):
         frappe.throw(
-            f"Run must be in Imported or Validated status to validate "
+            f"Run must be in Parsed or Validated status to validate "
             f"(current: '{run.status}').",
             frappe.ValidationError,
         )
@@ -129,6 +131,12 @@ def validate_import(run_name: str) -> dict:
 
     # Step 2: Strict row validation (uses freshly filled rates).
     validate_rows_at_queue_time(rows)
+
+    # Step 3: Idempotency pre-check — surface duplicates before the user queues
+    # so they can review or abort without any rows touching the ERP.
+    # Worker re-runs this at post time for race-condition safety.
+    apply_idempotency_guard(rows, run)
+
     run_config_errors = get_run_config_errors(run, rows)
 
     for row in rows:
@@ -141,6 +149,9 @@ def validate_import(run_name: str) -> dict:
                 "validation_error_message": row.get("validation_error_message"),
                 "exchange_rate":            row.get("exchange_rate"),
                 "base_amount":              row.get("base_amount"),
+                "is_duplicate":             row.get("is_duplicate", 0),
+                "posted_doctype":           row.get("posted_doctype"),
+                "posted_docname":           row.get("posted_docname"),
             },
         )
 
@@ -171,11 +182,11 @@ def validate_import(run_name: str) -> dict:
             "run_config_errors": [],
         }
 
-    run.db_set("status", "Imported", notify=True)
+    run.db_set("status", "Parsed", notify=True)
     frappe.db.commit()
     return {
         "status": "invalid",
-        "run_status": "Imported",
+        "run_status": "Parsed",
         "rows_valid": valid_count,
         "rows_failed": failed_count,
         "error_code_counts": error_code_counts,
@@ -262,6 +273,34 @@ def queue_run(run_name: str) -> dict:
 
 
 @frappe.whitelist()
+def revert_run(run_name: str) -> dict:
+    """
+    Cancel all posted ERP documents for a completed or partially-posted run.
+
+    Allowed on: Completed, Failed, Cancelled, Revert-Failed.
+    Sets status → Reverting and enqueues the async revert worker.
+    The worker cancels each posted SI/PI/JE and tracks per-row revert status.
+
+    Permission: Accountant or System Manager.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", doc=run, throw=True)
+
+    if run.status not in ("Completed", "Failed", "Cancelled", "Revert-Failed"):
+        frappe.throw(
+            f"Only Completed, Failed, Cancelled, or Revert-Failed runs can be reverted "
+            f"(current: '{run.status}').",
+            frappe.ValidationError,
+        )
+
+    job_id = enqueue_revert(run_name)
+    run.db_set("status", "Reverting", notify=True)
+    frappe.db.commit()
+
+    return {"status": "reverting", "job_id": job_id}
+
+
+@frappe.whitelist()
 def cancel_run(run_name: str) -> dict:
     """
     Cancel a queued/processing run.
@@ -306,6 +345,26 @@ def get_run_progress(run_name: str) -> dict:
         "finished_on":  str(run.finished_on or ""),
         "diagnostics_file": run.diagnostics_file or "",
     }
+
+
+# ── setup wizard ──────────────────────────────────────────────────────────────
+
+@frappe.whitelist()
+def setup_from_csv(file_url: str, company: str | None = None) -> dict:
+    """
+    Seed Cashew Settings from a Cashew CSV export file.
+
+    Finds or creates Chart of Accounts entries for each category and cashew
+    account found in the CSV, then populates the account/category mapping
+    tables in Cashew Settings.  Already-mapped entries are skipped.
+
+    Permission: System Manager only.
+    """
+    frappe.only_for("System Manager")
+
+    from cashew_integration.setup import run_setup_from_csv
+    csv_bytes = _read_attached_file(file_url)
+    return run_setup_from_csv(company, csv_bytes)
 
 
 # ── internal helpers ───────────────────────────────────────────────────────────

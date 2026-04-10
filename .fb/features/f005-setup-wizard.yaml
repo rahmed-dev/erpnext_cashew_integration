@@ -1,0 +1,61 @@
+id: f005
+name: Setup Wizard — Seed from CSV
+status: done
+stage: done
+owner: bmad-fb-quick
+
+goal: >
+  Allow a System Manager to seed Cashew Settings (account mapping + category
+  mapping) from a Cashew CSV export in one API call, eliminating manual
+  chart-of-accounts setup for first-time installs.
+
+acceptance_notes:
+  - setup_from_csv(company, file_url) whitelisted endpoint — System Manager only.
+  - Parses CSV columns: account, currency, category name, subcategory name, income.
+  - Balance Correction rows skipped (they are Transfer JVs, not category mappings).
+  - For each cashew account (Petty Cash, NSave, Saving, Investment):
+      Find existing Cash/Bank leaf account by account_name + company.
+      If not found, create Cash account under best cash-type group.
+  - For each category:
+      income=true  → find/create under Income group.
+      income=false → find/create under Expense group.
+      Match by account_name + root_type to respect existing CoA.
+  - Merge into Cashew Settings: skip rows already present (idempotent).
+  - Returns {accounts_added, accounts_skipped, categories_added, categories_skipped}.
+
+data_from_csv:
+  accounts:
+    - Investment: PKR
+    - NSave: USD
+    - Petty Cash: PKR
+    - Saving: PKR
+  income_categories:
+    - Freelance
+    - Loan Payment Received
+    - Profit
+    - Salary
+    - Savings
+  expense_categories:
+    - Asset purchase, Bank Charges, Bike Maintenance, Bills & Fees
+    - Claude, Codex, Cursor, Education, Entertainment, Family
+    - Fruit, Fuel, Game Buy, Govt. Fees, Groceries, Guest visit
+    - Haircut, Healthcare, Home, Internet Expense, Lent, Loss
+    - Misc., PC Build, Party, Repair, Shopping, Traffic Challan
+    - Unknown, Upwork Connect
+
+components:
+  - id: f005-c001
+    name: setup.py — CSV parser + CoA find/create logic
+    type: backend
+    stage: done
+    files:
+      - cashew_integration/setup.py
+  - id: f005-c002
+    name: api.py — setup_from_csv endpoint
+    type: backend
+    stage: done
+    files:
+      - cashew_integration/api.py
+
+depends_on:
+  - f001
