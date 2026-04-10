@@ -121,7 +121,10 @@ def _fetch_erp_document_hashes(rows: list[dict]) -> dict[str, tuple[str, str]]:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _mark_skipped(row: dict, posted_doctype: str, posted_docname: str) -> None:
-    row["validation_status"] = "Skipped"
-    row["is_duplicate"]      = 1
-    row["posted_doctype"]    = posted_doctype
-    row["posted_docname"]    = posted_docname
+    row["validation_status"]        = "Skipped"
+    row["is_duplicate"]             = 1
+    row["posted_doctype"]           = posted_doctype
+    row["posted_docname"]           = posted_docname
+    row["validation_error_message"] = (
+        f"Duplicate — already posted as {posted_doctype} {posted_docname}."
+    )

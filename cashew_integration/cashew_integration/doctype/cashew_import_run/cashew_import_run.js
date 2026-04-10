@@ -258,12 +258,22 @@ function _start_progress_polling(frm) {
 				if (!r.message) return;
 				const p = r.message;
 
-				// Update the counter fields in-place without a full reload
-				frm.set_value("rows_posted",  p.rows_posted);
-				frm.set_value("rows_failed",  p.rows_failed);
-				frm.set_value("rows_skipped", p.rows_skipped);
+				// Update counters and status in-place without marking form dirty.
+				// frm.set_value() triggers dirty; mutate doc + refresh_field() instead.
+				const fields = {
+					status:       p.status,
+					rows_posted:  p.rows_posted,
+					rows_failed:  p.rows_failed,
+					rows_skipped: p.rows_skipped,
+					started_on:   p.started_on  || frm.doc.started_on,
+					finished_on:  p.finished_on || frm.doc.finished_on,
+				};
+				Object.entries(fields).forEach(([f, v]) => {
+					frm.doc[f] = v;
+					frm.refresh_field(f);
+				});
 
-				if (!["Queued", "Processing"].includes(p.status)) {
+				if (!["Queued", "Processing", "Reverting"].includes(p.status)) {
 					_stop_progress_polling();
 					frm.reload_doc();
 				}

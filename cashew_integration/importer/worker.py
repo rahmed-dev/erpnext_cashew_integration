@@ -21,6 +21,8 @@ processed; if so it posts the pair immediately, otherwise it parks the first
 leg and posts when the second arrives.
 """
 
+import uuid
+
 import frappe
 from frappe.utils import now
 
@@ -34,14 +36,16 @@ from cashew_integration.importer.diagnostics import generate_diagnostics_csv
 
 def enqueue_run(run_name: str) -> str:
     """Enqueue the import worker and return the job ID."""
-    job = frappe.enqueue(
+    job_id = str(uuid.uuid4())
+    frappe.enqueue(
         "cashew_integration.importer.worker.process_run",
         run_name=run_name,
         queue="long",
         timeout=3600,
+        job_id=job_id,
         enqueue_after_commit=True,
     )
-    return getattr(job, "id", "")
+    return job_id
 
 
 # ── worker entry point ─────────────────────────────────────────────────────────
@@ -202,14 +206,16 @@ def _process(run_name: str) -> None:
 
 def enqueue_revert(run_name: str) -> str:
     """Enqueue the revert worker and return the job ID."""
-    job = frappe.enqueue(
+    job_id = str(uuid.uuid4())
+    frappe.enqueue(
         "cashew_integration.importer.worker.process_revert",
         run_name=run_name,
         queue="long",
         timeout=3600,
+        job_id=job_id,
         enqueue_after_commit=True,
     )
-    return getattr(job, "id", "")
+    return job_id
 
 
 # ── revert: worker entry point ────────────────────────────────────────────────
