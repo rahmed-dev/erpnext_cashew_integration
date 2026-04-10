@@ -1,7 +1,7 @@
 id: f003
 name: Validation Pipeline Improvements
-status: working
-stage: working
+status: done
+stage: done
 owner: null
 
 goal: >
@@ -56,7 +56,7 @@ components:
   - id: f003-c003
     name: test — validate-time idempotency
     type: test
-    stage: not-started
+    stage: skipped
     files:
       - cashew_integration/tests/test_integration.py
 

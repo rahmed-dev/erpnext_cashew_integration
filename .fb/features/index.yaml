@@ -6,18 +6,18 @@ features:
     priority: high
   - id: f002
     name: Cashew Automated Sync
-    status: backlog
+    status: cancelled
     stage: not-started
     priority: medium
   - id: f003
     name: Validation Pipeline Improvements
-    status: planned
-    stage: not-started
+    status: done
+    stage: done
     priority: medium
   - id: f004
     name: Import Run Revert
-    status: working
-    stage: working
+    status: done
+    stage: done
     priority: high
   - id: f005
     name: Setup Wizard — Seed from CSV

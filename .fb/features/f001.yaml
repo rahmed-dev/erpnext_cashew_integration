@@ -45,6 +45,11 @@ components:
   - id: c005
     name: Posting Engine (SI / PI / JE / Transfer JV / External Transfer JE / Adjustment JE)
     stage: done
+    notes: >
+      Journal Entry path (transfers, balance corrections, no-party rows) is
+      verified in production. Sales Invoice and Purchase Invoice posting paths
+      are NOT tested and may not work — item/tax/account configuration may
+      require adjustment before SI/PI posting functions correctly.
   - id: c006
     name: Idempotency Guard
     stage: done

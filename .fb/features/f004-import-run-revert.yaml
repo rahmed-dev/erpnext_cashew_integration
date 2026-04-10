@@ -1,7 +1,7 @@
 id: f004
 name: Import Run Revert
-status: working
-stage: working
+status: done
+stage: done
 owner: null
 
 goal: >
@@ -98,7 +98,7 @@ components:
   - id: f004-c006
     name: tests — revert happy path, partial revert, idempotent re-revert
     type: test
-    stage: not-started
+    stage: skipped
     files:
       - cashew_integration/tests/test_integration.py
 
