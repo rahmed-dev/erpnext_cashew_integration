@@ -250,10 +250,5 @@ after_install = "cashew_integration.install.after_install"
 
 # Fixtures
 # --------
-fixtures = [
-    {
-        "doctype": "Custom Field",
-        "filters": [["module", "=", "Cashew Integration"]],
-    }
-]
+fixtures = []
 

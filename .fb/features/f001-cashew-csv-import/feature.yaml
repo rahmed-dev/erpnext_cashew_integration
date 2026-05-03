@@ -68,5 +68,5 @@ test_requirements:
   notes: Unit tests for parser and mapping; integration tests for import flow.
 
 spec:
-  path: .fb/specs/f001-cashew-csv-import.md
+  path: .fb/features/f001-cashew-csv-import/specs/f001-spec.md
   status: approved

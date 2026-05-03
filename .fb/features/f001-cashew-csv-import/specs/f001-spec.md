@@ -16,10 +16,10 @@
 
 ## Architecture Constraints Referenced
 
-- `architecture/decisions-log.md` — all decisions including Transfer JV, Cashew Account Mapping, Exchange Rate Source of Truth (2026-04-08)
-- `architecture/backend-scope.md`
-- `architecture/data-flow.md`
-- `architecture/frontend-stack.md`
+- `system-arch/decisions-log.md` — all decisions including Transfer JV, Cashew Account Mapping, Exchange Rate Source of Truth (2026-04-08)
+- `system-arch/backend-scope.md`
+- `system-arch/data-flow.md`
+- `system-arch/frontend-stack.md`
 
 ## Story Contract (Approved v3)
 

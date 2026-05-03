@@ -24,3 +24,13 @@ features:
     status: done
     stage: done
     priority: high
+  - id: f006
+    name: Rules Clarity & Party Resolution v2
+    status: not-started
+    stage: not-started
+    priority: high
+  - id: f007
+    name: Customizations Export Migration
+    status: done
+    stage: done
+    priority: medium

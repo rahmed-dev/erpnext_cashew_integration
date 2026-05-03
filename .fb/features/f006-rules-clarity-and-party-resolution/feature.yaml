@@ -1,0 +1,155 @@
+# f006
+
+id: f006
+name: Rules Clarity & Party Resolution v2
+status: not-started
+stage: not-started
+priority: high
+owner: bmad-fb-architect
+
+goal: >
+  Make import behavior predictable and auditable for the user: rich party
+  resolution that handles loans and per-employer salary, a readable Import
+  Row table, and a clear "why did this row resolve this way?" answer for
+  every row.
+
+problem: >
+  Three connected pains the user hit while running real imports:
+
+  1. Party resolution is too coarse.
+     - Run-level defaults are a single Customer (Income) and single
+       Supplier (Expense). Cannot model multi-employer salary or any loan
+       flow (Lent / Loan Received / Loan Repayment), where the party type
+       and identity should depend on the category — not just on income vs
+       expense direction.
+     - There is no way to attach a default party to a category mapping
+       (e.g. "Salary" → specific employer Customer) or to an account
+       mapping (e.g. all txns on "NSave" → linked Supplier).
+     - Counterpart hints in the CSV (note / title text) are not used at
+       all for party resolution.
+
+  2. The Import Row child table is hard to read.
+     - 30+ fields, 20+ marked in_list_view → grid floods sideways with
+       overlapping resolution / validation / posting columns.
+     - No grouping, color, or mode toggle — every run looks the same
+       whether the user is verifying mappings, fixing errors, or auditing
+       posted docs.
+     - Long validation_error_message strings truncate awkwardly in the
+       grid; no hover / expand affordance.
+
+  3. The resolution rules are not surfaced.
+     - Logic is spread across four places: Cashew Account Mapping,
+       parser txn_type detection, Cashew Category Mapping (incl.
+       requires_party), and run-level default_customer / default_supplier.
+     - There is no per-row diagnostic explaining which rule(s) fired,
+       which fell through, and which run default filled the gap. Users
+       have to read the source to understand outcomes.
+
+user_stories:
+  - As an accountant tracking salary from multiple employers, I can attach
+    a specific Customer to the "Salary" category so each salary row posts
+    against the right party without per-row overrides.
+  - As an accountant booking a loan I made, I can mark a category as
+    Lending → routes to a Loan Account with the borrower attached as the
+    party — even though it is an Expense direction in Cashew.
+  - As an accountant booking a loan repayment received, I can capture
+    that the inflow reduces a receivable / increases payable to the right
+    counterparty — without abusing default_customer.
+  - As an accountant scanning a 500-row import, I can switch the Import
+    Rows table between Compact, Resolution, Validation, and Posted views
+    — each shows ≤ 6 columns relevant to the task.
+  - As an accountant who cares why a row resolved as it did, I can open a
+    row and see: which Account Mapping fired, which Category Mapping
+    fired (or fell through to default), which party rule resolved the
+    party (per-category, per-account, run default, preview override), and
+    why the txn_type was set this way.
+  - As an accountant cleaning up a problem run, I can bulk-override
+    party for a filtered set of rows (e.g. all category=Salary rows in
+    this run) instead of editing one-by-one.
+
+opportunities_brainstorm:
+  party_v2:
+    - Per-category default party + party_type on Cashew Category Mapping
+      (overrides run-level defaults).
+    - Per-account default party on Cashew Account Mapping (e.g. "NSave"
+      always pairs with bank Supplier).
+    - Allow Customer party for Expense direction and Supplier party for
+      Income direction — driven by category configuration, not txn_type.
+    - Counterpart-text matcher: optional rule list (regex / contains on
+      title or note) → party. Lowest precedence after explicit per-row
+      override.
+    - Loan handling: either new txn_type "Loan" (parser-detected from
+      reserved category names) OR a "kind" field on Category Mapping
+      (Income / Expense / Loan / Transfer / Adjustment) that drives
+      route + account selection.
+    - Precedence chain (highest → lowest): per-row preview override →
+      per-account default party → per-category default party →
+      counterpart-text rule → run-level default by direction.
+
+  table_readability:
+    - Cut in_list_view to ~6 fields by default (suggested baseline:
+      row_idx, txn_date, raw_amount, txn_type, resolved_route,
+      validation_status).
+    - Add a Cashew Row Explorer report (frappe Report Builder or a Vue
+      page) with column presets — Compact, Resolution, Validation,
+      Posted, Loans-and-Parties.
+    - Status pills with color (Valid / Error / Skipped / Posted /
+      Reverted) instead of raw text.
+    - Inline truncation + click-to-expand for validation_error_message
+      and note.
+    - Group resolution columns under a collapsible header when the
+      Resolution preset is active.
+
+  rule_clarity:
+    - Per-row "Resolution Trace" panel — list every rule the engine
+      considered, marking which fired and which fell through. Shown on
+      Cashew Import Row form view.
+    - Persist a compact resolution_trace JSON field on each row so the
+      trace survives revert / re-validate.
+    - Rules dashboard on Cashew Settings: precedence diagram, plus
+      per-mapping hit count from last N runs (shows which rules are
+      load-bearing and which are dead).
+    - "Explain this row" action on the Import Run grid that opens a
+      side panel with the trace for the selected row.
+
+  bulk_ops:
+    - Bulk per-row party override action on Cashew Import Run: filter
+      rows in the grid (by category, raw_account, txn_type, validation
+      status) and set party_type + party in one shot.
+    - Re-run mapping resolution on a single row or a filtered subset
+      after editing Cashew Settings — without re-parsing the CSV.
+
+acceptance_notes:
+  - This feature is a discovery / architecture pass, not a quick patch.
+    Route through bmad-fb-architect → bmad-fb-td → bmad-fb-dev.
+  - Architect to decide: extend Cashew Category Mapping vs introduce a
+    Cashew Party Rule doctype; whether Loan is a new txn_type or a
+    category "kind" attribute; schema migration shape (new fields are
+    additive — existing runs must keep working).
+  - TD to break the work into components — at minimum: schema change,
+    mapping engine v2, resolution-trace persistence, list-view + report
+    presets, rules dashboard, bulk override action.
+  - Backwards compatibility: existing imports already done must stay
+    revertable via f004 paths; no rewrite of past Cashew Import Row
+    rows on migration.
+  - Out of scope (defer to f002 if/when reopened): live API sync. This
+    feature is strictly about the existing CSV ingestion pipeline.
+
+open_questions:
+  - Is "Loan" a new txn_type detected by the parser from reserved
+    category names (e.g. "Loan Payment Received", "Lent"), or a
+    user-configured "kind" attribute on Cashew Category Mapping?
+  - Should counterpart-text rules live on Cashew Category Mapping (one
+    extra child table per category) or as a separate top-level
+    Cashew Counterpart Rule doctype?
+  - Is the resolution trace stored per row (durable, survives revert),
+    or computed on-demand from the current ruleset (cheaper, but
+    drifts if rules edited after posting)?
+  - Should the Row Explorer be a Frappe Report or a Vue page on the
+    Cashew workspace? Report Builder is cheaper but less flexible for
+    presets.
+
+components: []  # to be filled by TD after architect pass
+
+depends_on:
+  - f001

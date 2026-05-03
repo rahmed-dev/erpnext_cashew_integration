@@ -1,0 +1,28 @@
+id: f007
+name: Customizations Export Migration
+status: done
+stage: done
+owner: bmad-fb-quick
+
+goal: >
+  Migrate Custom Field fixtures from monolithic fixtures/custom_field.json to
+  per-doctype custom/*.json files using Frappe's export-customizations approach.
+  Aligns with Dido Erp pattern; module field preserved per record so
+  sync_customizations claims/uninstalls cleanly.
+
+components:
+  - id: c001
+    name: Per-doctype custom/*.json files (Sales Invoice, Purchase Invoice, Journal Entry)
+    stage: done
+  - id: c002
+    name: hooks.py fixtures cleanup (drop Custom Field entry)
+    stage: done
+  - id: c003
+    name: Remove fixtures/custom_field.json
+    stage: done
+
+acceptance_notes:
+  - 9 custom fields exported across 3 files under cashew_integration/cashew_integration/custom/
+  - All records carry module="Cashew Integration"
+  - All files set sync_on_migrate=1
+  - Per-record parity verified vs old fixture before deletion
