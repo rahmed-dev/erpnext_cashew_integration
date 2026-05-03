@@ -16,15 +16,47 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now
 
-from cashew_integration.importer.parser import parse_csv
+from cashew_integration.importer.parser import parse_csv, _assign_txn_type
+from cashew_integration.importer.category_lookup import build_category_type_map
 from cashew_integration.importer.mapping import apply_mappings, apply_exchange_rates
 from cashew_integration.importer.validation import (
     validate_run_config,
     validate_rows_at_queue_time,
     get_run_config_errors,
+    validate_party_present,
+    check_category_account_class,
 )
 from cashew_integration.importer.idempotency import apply_idempotency_guard
 from cashew_integration.importer.worker import enqueue_run, enqueue_revert
+
+
+# ── row-explorer mutation gating ───────────────────────────────────────────────
+
+_ROW_EXPLORER_MUTATION_ALLOWED_STATUSES = {
+    "Draft", "Parsed", "Validated", "Failed", "Cancelled", "Revert-Failed",
+}
+
+
+def _coerce_row_indices(value):
+    """Frappe routes list/dict args through ``frappe.form_dict`` which JSON-
+    encodes them — the handler receives a string like ``"[1,2,3]"`` or
+    ``"null"`` rather than a Python list / None. Normalize to a list of ints
+    or None.
+    """
+    import json as _json
+    if value is None:
+        return None
+    if isinstance(value, str):
+        s = value.strip()
+        if not s or s.lower() == "null":
+            return None
+        try:
+            value = _json.loads(s)
+        except Exception:
+            frappe.throw(_("row_indices must be a JSON array of integers."))
+    if isinstance(value, (list, tuple, set)):
+        return [int(i) for i in value]
+    frappe.throw(_("row_indices must be a JSON array of integers."))
 
 
 # ── parse + preview ────────────────────────────────────────────────────────────
@@ -123,6 +155,18 @@ def validate_import(run_name: str) -> dict:
             row["validation_error_code"] = None
             row["validation_error_message"] = None
 
+    # Step 0 (f006 c002 option-b): re-apply txn_type from current Cashew Category
+    # Mapping. Captures category_type edits made between parse and validate
+    # without requiring a CSV re-upload. Skips Error rows + Transfer-family
+    # rows that already went through _classify_transfer_rows at parse time.
+    category_map = build_category_type_map()
+    for row in rows:
+        if row.get("validation_status") == "Error":
+            continue
+        if row.get("txn_type") in ("Transfer", "External Transfer", "Adjustment"):
+            continue
+        _assign_txn_type(row, category_map)
+
     # Step 1: Fetch exchange rates (ERP local → online providers).
     # This is the deliberate trigger point — rates are fetched only when the
     # user clicks Validate Import, not at parse time.
@@ -152,6 +196,9 @@ def validate_import(run_name: str) -> dict:
                 "is_duplicate":             row.get("is_duplicate", 0),
                 "posted_doctype":           row.get("posted_doctype"),
                 "posted_docname":           row.get("posted_docname"),
+                # f006 c002 option-b — persist re-evaluated routing.
+                "txn_type":                 row.get("txn_type"),
+                "resolved_route":           row.get("resolved_route"),
             },
         )
 
@@ -409,3 +456,166 @@ def _count_error_codes(rows: list[dict]) -> dict:
         code = row.get("validation_error_code") or "UNKNOWN_ERROR"
         counts[code] = counts.get(code, 0) + 1
     return counts
+
+
+# ── f006 c006 — Row Explorer API ───────────────────────────────────────────────
+
+_ROW_EXPLORER_FIELDS = (
+    "row_idx", "txn_date", "raw_amount", "source_currency", "company_currency",
+    "exchange_rate", "base_amount", "income_flag", "txn_type", "category",
+    "sub_category", "title", "note", "raw_account", "resolved_route",
+    "requires_party", "resolved_account", "resolved_erp_account",
+    "resolved_external_account", "resolved_party_type", "resolved_party",
+    "validation_status", "validation_error_code", "validation_error_message",
+    "posted_doctype", "posted_docname", "posted_gl_date", "is_duplicate",
+    "revert_status", "revert_error",
+)
+
+
+@frappe.whitelist()
+def row_explorer_load(run_name: str) -> dict:
+    """Read-only payload for the Cashew Row Explorer Vue page.
+
+    Returns rows + run-level counters + a ``mutation_allowed`` gate the UI uses
+    to enable / disable inline edits.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", ptype="read", doc=run, throw=True)
+
+    rows = [
+        {f: r.get(f) for f in _ROW_EXPLORER_FIELDS}
+        for r in run.import_rows
+    ]
+
+    return {
+        "run_name":          run.name,
+        "status":            run.status,
+        "company":           run.company,
+        "company_currency":  frappe.get_cached_value("Company", run.company, "default_currency"),
+        "rows_total":        run.rows_total,
+        "rows_valid":        run.rows_valid,
+        "rows_posted":       run.rows_posted,
+        "rows_failed":       run.rows_failed,
+        "rows_skipped":      run.rows_skipped,
+        "mutation_allowed":  run.status in _ROW_EXPLORER_MUTATION_ALLOWED_STATUSES,
+        "rows":              rows,
+        "enums": {
+            "txn_type":          ["Income", "Expense", "Transfer", "External Transfer",
+                                  "Adjustment", "Loan Receivable", "Loan Payable"],
+            "validation_status": ["", "Valid", "Error", "Skipped"],
+        },
+    }
+
+
+@frappe.whitelist()
+def row_explorer_set_party(
+    run_name: str,
+    row_indices,
+    party_type: str,
+    party: str,
+) -> dict:
+    """Set ``resolved_party`` + ``resolved_party_type`` on the given row_idxs
+    and re-evaluate party-presence validation. Returns the updated row payloads
+    so the UI can patch local state without a full reload.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", ptype="write", doc=run, throw=True)
+
+    if run.status not in _ROW_EXPLORER_MUTATION_ALLOWED_STATUSES:
+        frappe.throw(_("Cannot edit rows when run status is {0}.").format(run.status))
+    if party_type not in ("Customer", "Supplier"):
+        frappe.throw(_("party_type must be Customer or Supplier."))
+    if not party or not frappe.db.exists(party_type, party):
+        frappe.throw(_("{0} '{1}' does not exist.").format(party_type, party))
+
+    parsed = _coerce_row_indices(row_indices) or []
+    target = set(parsed)
+    if not target:
+        frappe.throw(_("row_indices must not be empty."))
+
+    updated = []
+    for r in run.import_rows:
+        if r.row_idx not in target:
+            continue
+        if r.posted_docname or r.revert_status == "Reverted":
+            continue  # posted / reverted rows are read-only
+        r.resolved_party_type = party_type
+        r.resolved_party      = party
+        # Clear any prior party-missing error before re-evaluating
+        if r.validation_error_code in ("LOAN_PARTY_MISSING", "PARTY_MISSING"):
+            r.validation_status        = "Valid"
+            r.validation_error_code    = None
+            r.validation_error_message = None
+        # Re-run party-presence check (no-op when party now set; sets Error if not)
+        row_dict = _child_to_dict(r)
+        validate_party_present(row_dict)
+        for k in ("validation_status", "validation_error_code", "validation_error_message"):
+            r.set(k, row_dict.get(k))
+        updated.append({f: r.get(f) for f in _ROW_EXPLORER_FIELDS})
+
+    run.save(ignore_permissions=False)
+    frappe.db.commit()
+    return {"updated": updated}
+
+
+@frappe.whitelist()
+def row_explorer_revalidate(
+    run_name: str,
+    row_indices=None,
+) -> dict:
+    """Re-run c002 routing + c003 party-presence validation against current
+    Cashew Settings. If ``row_indices`` is None, revalidates all non-Skipped,
+    non-Posted rows.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", ptype="write", doc=run, throw=True)
+
+    if run.status not in _ROW_EXPLORER_MUTATION_ALLOWED_STATUSES:
+        frappe.throw(_("Cannot revalidate when run status is {0}.").format(run.status))
+
+    cat_map = build_category_type_map()
+    parsed = _coerce_row_indices(row_indices)
+    target = set(parsed) if parsed is not None else None
+
+    revalidated = []
+    for r in run.import_rows:
+        if target is not None and r.row_idx not in target:
+            continue
+        if r.posted_docname or r.validation_status == "Skipped":
+            continue
+
+        row_dict = _child_to_dict(r)
+        # Reset prior validation state before re-evaluation
+        row_dict["validation_status"]        = ""
+        row_dict["validation_error_code"]    = None
+        row_dict["validation_error_message"] = None
+        # c002: re-route txn_type from current category_type
+        _assign_txn_type(row_dict, cat_map)
+        # c003: re-check party requirement
+        validate_party_present(row_dict)
+        # c001: account-class predicate (only when route present + non-transfer)
+        if row_dict.get("txn_type") not in ("Transfer", "External Transfer", "Adjustment"):
+            mapping_hit = cat_map.get(
+                (row_dict.get("category"), row_dict.get("sub_category") or "")
+            ) or cat_map.get((row_dict.get("category"), ""))
+            if mapping_hit:
+                msg = check_category_account_class(
+                    mapping_hit.get("category_type"),
+                    row_dict.get("resolved_account") or mapping_hit.get("default_account"),
+                )
+                if msg and row_dict.get("validation_status") != "Error":
+                    from cashew_integration.importer.errors import set_row_validation_error
+                    set_row_validation_error(row_dict, "CATEGORY_ACCOUNT_CLASS_MISMATCH", msg)
+
+        # If no validator fired, the row is clean — stamp Valid so the UI pill
+        # doesn't show "Pending" for re-validated rows that previously read Valid.
+        if not row_dict.get("validation_status"):
+            row_dict["validation_status"] = "Valid"
+        for k in ("txn_type", "resolved_route",
+                  "validation_status", "validation_error_code", "validation_error_message"):
+            r.set(k, row_dict.get(k))
+        revalidated.append({f: r.get(f) for f in _ROW_EXPLORER_FIELDS})
+
+    run.save(ignore_permissions=False)
+    frappe.db.commit()
+    return {"revalidated": revalidated}

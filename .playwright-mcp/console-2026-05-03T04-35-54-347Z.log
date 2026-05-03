@@ -1,0 +1,5 @@
+[     261ms] [LOG] Deprecated as of 10.6.0. initHighlighting() is deprecated.  Use highlightAll() instead. @ http://127.0.0.1:8001/assets/frappe/dist/js/frappe-web.bundle.FC377MPL.js:20628
+[   19642ms] [LOG] localStorage cleared @ http://127.0.0.1:8001/assets/frappe/dist/js/desk.bundle.Q5MHXS26.js:13535
+[   19642ms] [LOG] Cleared App Cache. @ http://127.0.0.1:8001/assets/frappe/dist/js/desk.bundle.Q5MHXS26.js:13508
+[   19643ms] [LOG] localStorage cleared @ http://127.0.0.1:8001/assets/frappe/dist/js/desk.bundle.Q5MHXS26.js:13535
+[   19886ms] [ERROR] Failed to load resource: the server responded with a status of 404 (NOT FOUND) @ http://127.0.0.1:8001/assets/erpnext/desktop_icons/settings.svg:0

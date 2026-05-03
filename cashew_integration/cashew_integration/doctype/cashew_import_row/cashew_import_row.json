@@ -138,7 +138,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Transaction Type",
-   "options": "Income\nExpense\nTransfer\nExternal Transfer\nAdjustment",
+   "options": "Income\nExpense\nTransfer\nExternal Transfer\nAdjustment\nLoan Receivable\nLoan Payable",
    "read_only": 1,
    "reqd": 1
   },
@@ -172,7 +172,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Resolved Route",
-   "options": "\nJournal Entry\nTransfer JV\nExternal Transfer JE\nAdjustment JE",
+   "options": "\nJournal Entry\nTransfer JV\nExternal Transfer JE\nAdjustment JE\nLoan Receivable JE\nLoan Payable JE",
    "read_only": 1
   },
   {

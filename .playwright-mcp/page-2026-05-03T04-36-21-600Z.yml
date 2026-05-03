@@ -1,0 +1,55 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e5] [cursor=pointer]:
+      - img [ref=e9]
+      - generic [ref=e11]:
+        - generic [ref=e12]: Cashew Integration
+        - generic [ref=e13]: Cashew Integration
+      - button [ref=e14]:
+        - img [ref=e15]
+    - generic [ref=e17]:
+      - generic "Search" [ref=e18]:
+        - generic [ref=e20] [cursor=pointer]:
+          - img [ref=e22]
+          - generic [ref=e23]: Search
+          - generic [ref=e24]: Ctrl+K
+      - generic "Notification" [ref=e25]:
+        - generic [ref=e27] [cursor=pointer]:
+          - img [ref=e29]
+          - generic [ref=e30]: Notification
+    - generic [ref=e32]:
+      - generic "Cashew Integration" [ref=e33]:
+        - link "Cashew Integration" [ref=e35] [cursor=pointer]:
+          - /url: /desk/cashew-integration
+          - img [ref=e37]
+          - generic [ref=e38]: Cashew Integration
+      - generic "Cashew Import Run" [ref=e39]:
+        - link "Cashew Import Run" [ref=e41] [cursor=pointer]:
+          - /url: /desk/cashew-import-run
+          - img [ref=e43]
+          - generic [ref=e44]: Cashew Import Run
+      - generic "Cashew Settings" [ref=e45]:
+        - link "Cashew Settings" [ref=e47] [cursor=pointer]:
+          - /url: /desk/cashew-settings/Cashew%20Settings
+          - img [ref=e49]
+          - generic [ref=e50]: Cashew Settings
+    - generic [ref=e51]:
+      - generic [ref=e52] [cursor=pointer]:
+        - img [ref=e53]
+        - generic [ref=e54]: Collapse
+      - button "User Menu" [ref=e56] [cursor=pointer]:
+        - generic "Administrator" [ref=e58]:
+          - generic "Administrator" [ref=e59]: A
+        - generic [ref=e60]:
+          - generic [ref=e61]: Administrator
+          - generic [ref=e62]: admin@example.com
+  - generic [ref=e63]:
+    - banner
+    - generic [ref=e69]:
+      - button [ref=e70] [cursor=pointer]:
+        - img [ref=e71]
+      - list [ref=e74]:
+        - listitem [ref=e75]:
+          - link "/ Cashew Row Explorer" [ref=e76] [cursor=pointer]:
+            - /url: cashew-row-explorer/CASHEW-IMPORT-2026-000003
+    - contentinfo

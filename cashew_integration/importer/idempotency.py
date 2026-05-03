@@ -14,6 +14,8 @@ If the source leg is a duplicate, both legs are marked Skipped.
 
 import frappe
 
+from cashew_integration.importer.errors import prefix_with_row_idx
+
 
 # ── public entry point ─────────────────────────────────────────────────────────
 
@@ -125,6 +127,7 @@ def _mark_skipped(row: dict, posted_doctype: str, posted_docname: str) -> None:
     row["is_duplicate"]             = 1
     row["posted_doctype"]           = posted_doctype
     row["posted_docname"]           = posted_docname
-    row["validation_error_message"] = (
-        f"Duplicate — already posted as {posted_doctype} {posted_docname}."
+    row["validation_error_message"] = prefix_with_row_idx(
+        row,
+        f"Duplicate — already posted as {posted_doctype} {posted_docname}.",
     )

@@ -2,10 +2,12 @@
 C005 — Posting Engine
 
 Routes each valid, non-skipped row to the correct ERPNext document:
-  1. Income / Expense  → Journal Entry (party on account line if requires_party)
-  2. Transfer          → Transfer Journal Entry (one JE per pair)
-  3. External Transfer → External Transfer JE
-  4. Adjustment        → Adjustment JE
+  1. Income / Expense   → Journal Entry (party on account line if requires_party)
+  2. Transfer           → Transfer Journal Entry (one JE per pair)
+  3. External Transfer  → External Transfer JE
+  4. Adjustment         → Adjustment JE
+  5. Loan Receivable    → Loan Receivable JE (party on Receivable line)  [f006 c004]
+  6. Loan Payable       → Loan Payable JE    (party on Payable line)     [f006 c004]
 
 Each poster returns (posted_doctype, posted_docname).
 Callers must wrap individual rows in try/except and record per-row failures.
@@ -13,6 +15,8 @@ Callers must wrap individual rows in try/except and record per-row failures.
 
 import frappe
 from frappe.utils import flt
+
+from cashew_integration.importer.errors import set_row_validation_error
 
 
 # ── public dispatcher ──────────────────────────────────────────────────────────
@@ -35,6 +39,10 @@ def post_row(row: dict, run) -> tuple[str, str]:
         return _post_external_transfer_je(row, run)
     if route == "Adjustment JE":
         return _post_adjustment_je(row, run)
+    if route == "Loan Receivable JE":
+        return _post_loan_je(row, run, party_type="Customer")
+    if route == "Loan Payable JE":
+        return _post_loan_je(row, run, party_type="Supplier")
 
     frappe.throw(f"Unknown resolved_route '{route}' on row {row['row_idx']}.")
 
@@ -214,9 +222,7 @@ def _mark_transfer_pair_imbalance(source_row, dest_row, imbalance, tolerance):
         "Adjust the exchange rate in the preview or increase JV Rounding Tolerance."
     )
     for r in (source_row, dest_row):
-        r["validation_status"]        = "Error"
-        r["validation_error_code"]    = "TRANSFER_JV_IMBALANCE"
-        r["validation_error_message"] = msg
+        set_row_validation_error(r, "TRANSFER_JV_IMBALANCE", msg)
 
 
 def _extract_transfer_labels(note: str, source_fallback: str, dest_fallback: str) -> tuple[str, str]:
@@ -338,6 +344,92 @@ def _post_adjustment_je(row: dict, run):
     je.submit()
     return "Journal Entry", je.name
 
+
+
+# ── 7. Loan Receivable / Loan Payable JE (f006 c004) ───────────────────────────
+
+def _post_loan_je(row: dict, run, party_type: str):
+    """Post a Journal Entry for a loan row.
+
+    party_type: ``"Customer"`` for ``txn_type == "Loan Receivable"``,
+    ``"Supplier"`` for ``txn_type == "Loan Payable"``.
+
+    Decision 1 routing (DR/CR pattern is uniform across both loan kinds —
+    the difference is which side the party lands on, not the leg direction):
+        income=true  → DR cash,  CR loan account   (cash in, liability/asset moves)
+        income=false → DR loan,  CR cash account   (cash out, liability/asset moves)
+
+    Party on the loan-account line only (ERPNext requires party on
+    Receivable/Payable GL entries; cash side has no party).
+    """
+    src_cur    = row["source_currency"]
+    cmp_cur    = frappe.get_cached_value("Company", run.company, "default_currency")
+    exr        = flt(row.get("exchange_rate") or 1)
+    base_amt   = flt(row.get("base_amount") or round(row["raw_amount"] * exr, 2))
+    raw_amt    = abs(flt(row["raw_amount"]))
+    income     = row.get("income_flag") == "true"
+
+    # Loan account currency (typically company-currency, but support foreign)
+    loan_account = row["resolved_account"]
+    loan_cur     = _get_account_currency(loan_account, run.company)
+    loan_exr     = 1.0 if loan_cur == cmp_cur else exr
+    loan_amt     = base_amt if loan_cur == cmp_cur else raw_amt
+
+    cash_account = row["resolved_erp_account"]
+
+    multi_curr = 1 if (src_cur != cmp_cur or loan_cur != cmp_cur) else 0
+
+    # Decision 1 — uniform DR/CR by income_flag
+    if income:
+        cash_dr, cash_cr = raw_amt,  0
+        loan_dr, loan_cr = 0,        loan_amt
+    else:
+        cash_dr, cash_cr = 0,        raw_amt
+        loan_dr, loan_cr = loan_amt, 0
+
+    party = row.get("resolved_party")
+    if not party:
+        # validate_party_present (c003) should have caught this; defensive guard.
+        frappe.throw(
+            f"{row['txn_type']} row requires {party_type} party — none set.",
+            frappe.ValidationError,
+        )
+
+    je = frappe.get_doc({
+        "doctype":           "Journal Entry",
+        "company":           run.company,
+        "posting_date":      row["txn_date"],
+        "multi_currency":    multi_curr,
+        "remark":            (
+            f"Cashew {row['txn_type']}: {row['category']} | "
+            f"{party_type}: {party} | {row['raw_account']} {row['raw_amount']} "
+            f"{src_cur} | run:{run.name}"
+        ),
+        "cashew_import_run": run.name,
+        "cashew_row_hash":   row["source_hash"],
+        "cashew_row_idx":    row["row_idx"],
+        "accounts": [
+            {
+                "account":                    loan_account,
+                "party_type":                 party_type,
+                "party":                      party,
+                "debit_in_account_currency":  loan_dr,
+                "credit_in_account_currency": loan_cr,
+                "exchange_rate":              loan_exr,
+                "account_currency":           loan_cur,
+            },
+            {
+                "account":                    cash_account,
+                "debit_in_account_currency":  cash_dr,
+                "credit_in_account_currency": cash_cr,
+                "exchange_rate":              exr,
+                "account_currency":           src_cur,
+            },
+        ],
+    })
+    je.insert()
+    je.submit()
+    return "Journal Entry", je.name
 
 
 def _get_account_currency(account_name: str, company: str) -> str:

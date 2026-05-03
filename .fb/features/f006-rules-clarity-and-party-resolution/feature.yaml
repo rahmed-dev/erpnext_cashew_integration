@@ -2,10 +2,10 @@
 
 id: f006
 name: Rules Clarity & Party Resolution v2
-status: not-started
-stage: not-started
+status: pending-review
+stage: dev-done
 priority: high
-owner: bmad-fb-architect
+owner: bmad-fb-orch
 
 goal: >
   Make import behavior predictable and auditable for the user: rich party
@@ -135,21 +135,169 @@ acceptance_notes:
   - Out of scope (defer to f002 if/when reopened): live API sync. This
     feature is strictly about the existing CSV ingestion pipeline.
 
-open_questions:
-  - Is "Loan" a new txn_type detected by the parser from reserved
-    category names (e.g. "Loan Payment Received", "Lent"), or a
-    user-configured "kind" attribute on Cashew Category Mapping?
-  - Should counterpart-text rules live on Cashew Category Mapping (one
-    extra child table per category) or as a separate top-level
-    Cashew Counterpart Rule doctype?
-  - Is the resolution trace stored per row (durable, survives revert),
-    or computed on-demand from the current ruleset (cheaper, but
-    drifts if rules edited after posting)?
-  - Should the Row Explorer be a Frappe Report or a Vue page on the
-    Cashew workspace? Report Builder is cheaper but less flexible for
-    presets.
+open_questions_resolved:
+  # All four resolved during architect pass 2026-05-03.
+  # See arch/decisions.md for full rationale on each.
+  - q: Loan as new txn_type vs category "kind" attribute?
+    resolved: category_type Select on Cashew Category Mapping with 4 options
+      (Income / Expense / Loan Out / Loan In). Direction (income_flag) +
+      category_type combine to pick one of 4 loan posting routes.
+    decision_ref: arch/decisions.md#decision-1
+  - q: Counterpart-text rules — Category Mapping child table or separate
+      Cashew Counterpart Rule doctype?
+    resolved: Dropped entirely. No rule-based party resolution. Party set
+      manually per row in Vue Row Explorer. Cashew CSV carries no usable
+      party signal; rules add complexity without value.
+    decision_ref: arch/decisions.md#decision-2
+  - q: Resolution trace persisted vs computed on-demand?
+    resolved: Dropped (no rules → nothing to trace). History panel also
+      dropped per user direction.
+    decision_ref: arch/decisions.md#decision-2
+  - q: Row Explorer — Frappe Report or Vue page?
+    resolved: Frappe Page mounted at /app/cashew-row-explorer/<run-name>,
+      Vue-based. Inline edit + fix-modal capabilities require Vue (Script
+      Report cannot mutate). Stays in Desk for native permissions + nav.
+    decision_ref: arch/decisions.md#decision-3
 
-components: []  # to be filled by TD after architect pass
+scope_revisions_during_arch:
+  # Things the original f006 stub proposed that the architect pass dropped.
+  - dropped: Per-category default party + party_type on Cashew Category Mapping.
+    why: Decision 2 — no rule-based party. Manual per-row instead.
+  - dropped: Per-account default party on Cashew Account Mapping.
+    why: Decision 2.
+  - dropped: Counterpart-text matcher.
+    why: Decision 2 — no notes maintained in Cashew CSV.
+  - dropped: Precedence chain across rules.
+    why: Decision 2 — no rules.
+  - dropped: Resolution trace JSON field on Cashew Import Row.
+    why: Decision 2 — nothing to trace.
+  - dropped: Rules dashboard on Cashew Settings.
+    why: Decision 2 — no rules to dashboard.
+  - dropped: Per-row "Resolution Trace" panel + "Explain this row".
+    why: Decision 2 / Decision 3 — no trace; user dropped history panel.
+  - dropped: Run-level default_customer / default_supplier as active fields.
+    why: Decision 2 — manual per-row only. Columns kept nullable for f004
+      revert backwards-compat; hidden from Run form.
+  - parked: Prefill party from prior import (similarity match).
+    why: User-raised future idea. Out of f006 scope. See arch/parked.md#p1.
 
+components:
+  - id: c001
+    name: schema-loan-and-category-type
+    type: doctype
+    depends_on: []
+    spec_file: specs/c001-spec.md
+    stage: pending-review
+    note: Add category_type Select to Cashew Category Mapping. Add Loan
+      txn_type + resolved_route enum values to Cashew Import Row. Hide
+      run-level default_customer / default_supplier from Cashew Import Run
+      form (keep cols nullable for f004 revert).
+      TD-resolved D1.a — two distinct txn_types (Loan Receivable / Loan
+      Payable) over single Loan + sub-route. Save-time + validate-time
+      account-class predicate (option C). Transfer-family rows (Balance
+      Transfer / Balance Correction → Transfer / External Transfer /
+      Adjustment) bypass category_type entirely — confirmed against
+      current parser + mapping pipelines.
+  - id: c002
+    name: parser-loan-routing
+    type: backend-module
+    depends_on: [c001]
+    spec_file: specs/c002-spec.md
+    stage: pending-review
+    note: Parser sets txn_type from category_type + income_flag per
+      Decision 1's 4-route table. New shared helper category_lookup.py
+      so parser + mapping read same source. Validate-time re-evaluation
+      chosen (option b) — no CSV re-upload after category_type edits.
+      Loan routes set resolved_route in parser; Income/Expense routes
+      stay with mapping engine threshold logic.
+  - id: c003
+    name: mapping-engine-simplification
+    type: backend-module
+    depends_on: [c001, c002]
+    spec_file: specs/c003-spec.md
+    stage: pending-review
+    note: Strip rule-based party fallback chain in importer/mapping.py.
+      Engine validates "party present + party_type matches category_type
+      expectation" only. Pre-fills resolved_party_type from txn_type (the
+      only derivable invariant). Two error codes — LOAN_PARTY_MISSING +
+      existing PARTY_MISSING. party_source field deprecated (kept for f004
+      revert compat); engine writes null. New helper validate_party_present
+      in validation.py.
+  - id: c004
+    name: posting-loan-handler
+    type: backend-module
+    depends_on: [c001, c002]
+    spec_file: specs/c004-spec.md
+    stage: pending-review
+    note: New posting routes — Loan Receivable JE, Loan Payable JE.
+      Party_type + party land on the receivable/payable GL line. Honors
+      f001 multi-currency + rounding rules. Two route branches in
+      post_row dispatcher; shared _post_loan_je core. Decision 1
+      4-row DR/CR table drives leg assignment. Posts standard ERPNext
+      Journal Entry — f004 revert works as-is via doc.cancel().
+  - id: c005
+    name: validation-error-prefix
+    type: backend-module
+    depends_on: [c001]
+    spec_file: specs/c005-spec.md
+    stage: pending-review
+    note: Prefix every validation_error_message with [Row {row_idx}].
+      Confirm diagnostics_file CSV carries row_idx; extend if not.
+      Single shared helper errors.set_row_validation_error stamps prefix
+      + double-prefix protection for c002 option-b re-validate path.
+      File-level errors (no row_idx) remain unprefixed.
+  - id: c006
+    name: vue-row-explorer-page
+    type: frontend-page
+    depends_on: [c001, c003, c005]
+    spec_file: specs/c006-spec.md
+    stage: pending-review
+    note: Frappe Page at /app/cashew-row-explorer/<run-name>. Vue 3
+      SFC, lazy-loaded by page controller. Filter, 5 presets (Compact /
+      Resolution / Validation / Posted / Loans-and-Parties), status
+      pills, inline party edit, fix-modal driven by
+      validation_error_code, bulk party set. Three whitelisted API
+      methods (load / set_party / revalidate) on cashew_integration.api.
+      Mutation gated by run.status ∈ {Draft, Validated, Failed,
+      Cancelled, Revert-Failed}. Re-validation reuses c002 + c003
+      helpers — single source of truth. Loan rows surface title +
+      sub_category + note via Loan-details inline section (Option A,
+      no new schema fields).
+  - id: c007
+    name: import-run-form-slim
+    type: form-customization
+    depends_on: [c006]
+    spec_file: specs/c007-spec.md
+    stage: pending-review
+    note: Add "Open in Row Explorer" custom button to Cashew Import Run
+      form (deep-links to /app/cashew-row-explorer/<run-name>). Grid
+      stays as-is per user decision 2026-05-03 — table still useful
+      for in-form glance. default_customer / default_supplier already
+      hidden by c001 (no double-hide here). Component name retained
+      for traceability; original "slim grid" framing dropped.
+  - id: c008
+    name: loan-accounts-guard
+    type: backend-module
+    depends_on: [c001]
+    spec_file: specs/c008-spec.md
+    stage: pending-review
+    note: Validate Loan Receivable + Loan Payable accounts exist when a
+      Loan-typed Category Mapping is saved. Friendly error if missing,
+      pointing to setup wizard / chart-of-accounts setup.
+      Helper check_loan_account_class_exists in validation.py runs in
+      controller before c001 predicate. Single-company assumption (per
+      Configuration Structure decision). Filters is_group=0, disabled=0.
 depends_on:
   - f001
+
+components_dropped_during_td:
+  - id: c009
+    name: category-type-backfill-migration
+    why: |
+      User decision 2026-05-03 — drop. c001 sets category_type default
+      to Income on the field itself, so existing Cashew Category Mapping
+      rows pass validation on first save without explicit backfill.
+      Greenfield-enough state; user will re-tag the few existing
+      mappings manually if/when they edit them. No data loss risk —
+      existing import-run / import-row records are frozen and don't
+      reference category_type.

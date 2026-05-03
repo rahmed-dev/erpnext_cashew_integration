@@ -26,6 +26,7 @@ import uuid
 import frappe
 from frappe.utils import now
 
+from cashew_integration.importer.errors import set_row_validation_error
 from cashew_integration.importer.idempotency import apply_idempotency_guard
 from cashew_integration.importer.posting import post_row, post_transfer_pair
 from cashew_integration.importer.validation import validate_rows_at_queue_time, validate_run_config
@@ -181,8 +182,10 @@ def _process(run_name: str) -> None:
 
     # Any remaining unmatched Transfer legs: mark as errors
     for row in pending_transfer.values():
-        _mark_row_error(row, "Transfer pair partner was never encountered in the file.")
-        row["validation_error_code"] = "TRANSFER_PAIR_INCOMPLETE"
+        set_row_validation_error(
+            row, "TRANSFER_PAIR_INCOMPLETE",
+            "Transfer pair partner was never encountered in the file.",
+        )
         _write_row_result(run, row)
         failed += 1
 
@@ -361,9 +364,8 @@ def _update_counters(run, posted: int, failed: int, skipped: int) -> None:
 
 
 def _mark_row_error(row: dict, message: str) -> None:
-    row["validation_status"]        = "Error"
-    row["validation_error_code"]    = row.get("validation_error_code") or "POSTING_ERROR"
-    row["validation_error_message"] = message
+    code = row.get("validation_error_code") or "POSTING_ERROR"
+    set_row_validation_error(row, code, message)
 
 
 def _is_run_cancelled(run_name: str) -> bool:

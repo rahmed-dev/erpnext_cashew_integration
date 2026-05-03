@@ -66,12 +66,14 @@
   {
    "fieldname": "default_customer",
    "fieldtype": "Link",
+   "hidden": 1,
    "label": "Default Customer",
    "options": "Customer"
   },
   {
    "fieldname": "default_supplier",
    "fieldtype": "Link",
+   "hidden": 1,
    "label": "Default Supplier",
    "options": "Supplier"
   },

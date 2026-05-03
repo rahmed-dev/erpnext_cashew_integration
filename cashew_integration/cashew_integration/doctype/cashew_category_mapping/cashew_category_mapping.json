@@ -9,6 +9,7 @@
  "field_order": [
   "cashew_category",
   "cashew_sub_category",
+  "category_type",
   "default_account",
   "requires_party",
   "is_active"
@@ -26,6 +27,14 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Sub Category"
+  },
+  {
+   "fieldname": "category_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Category Type",
+   "options": "\nIncome\nExpense\nLoan Out\nLoan In",
+   "reqd": 1
   },
   {
    "fieldname": "default_account",

@@ -164,6 +164,14 @@ frappe.ui.form.on("Cashew Import Run", {
 function _update_buttons(frm) {
 	const s = frm.doc.status;
 
+	// Open in Row Explorer (f006 c007) — deep-link to the Vue page.
+	// Visible whenever the run has rows, regardless of status (audit + edit).
+	if (frm.doc.rows_total && frm.doc.rows_total > 0) {
+		frm.add_custom_button(__("Open in Row Explorer"), () => {
+			frappe.set_route("cashew-row-explorer", frm.doc.name);
+		});
+	}
+
 	// Parse & Preview: available in Draft/Imported/Validated (re-parse)
 	if (["Draft", "Parsed", "Validated"].includes(s)) {
 		frm.add_custom_button(__("Parse & Preview"), () => {
@@ -171,8 +179,10 @@ function _update_buttons(frm) {
 		}).addClass("btn-primary");
 	}
 
-	// Validate Import: strict checks before queueing
-	if (s === "Parsed") {
+	// Validate Import: strict checks before queueing.
+	// Visible on Parsed AND Validated so the user can re-validate after
+	// editing rows / mappings without having to Parse again.
+	if (["Parsed", "Validated"].includes(s)) {
 		frm.add_custom_button(__("Validate Import"), () => {
 			frm.trigger("_validate_import");
 		}).addClass("btn-warning");

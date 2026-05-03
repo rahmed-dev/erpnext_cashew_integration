@@ -5,7 +5,8 @@ Reads Cashew Settings and resolves, for each parsed row:
   - resolved_erp_account     (Cashew Account Mapping lookup on raw_account)
   - resolved_external_account (External Transfer rows: partner account from mapping)
   - resolved_route / resolved_account (Category Mapping lookup, non-Transfer rows)
-  - resolved_party / resolved_party_type / party_source (run-default fallback)
+  - resolved_party_type (pre-filled from txn_type — derivable invariant; user
+    picks the actual party in the Vue Row Explorer per f006 Decision 2)
 
 Exchange-rate resolution is intentionally deferred — it is triggered explicitly
 during the Validate Import stage (``apply_exchange_rates``) so online lookups
@@ -14,12 +15,19 @@ only fire when the user asks for them, not on every parse.
 Transfer and External Transfer rows skip category and party resolution.
 Adjustment rows skip category resolution (route already set by parser).
 
+f006 Decision 2 (c003): no rule-based party resolution. Run-level
+default_customer / default_supplier are no longer consulted; ``party_source``
+is no longer written (column kept on doctype for f004 revert backward compat).
+
 Designed to be called after parse_csv() and before the validation engine.
 Mutates row dicts in-place; returns nothing.
 """
 
 import frappe
 import requests
+
+from cashew_integration.importer.category_lookup import build_category_type_map
+from cashew_integration.importer.errors import set_row_validation_error
 
 
 # ── public entry point ─────────────────────────────────────────────────────────
@@ -28,8 +36,11 @@ def apply_mappings(rows: list[dict], run: "frappe.model.document.Document") -> N
     """
     Resolve all mappings for *rows* using *run* context.
 
-    *run* must have: ``company``, ``expense_threshold``,
-    ``default_customer``, ``default_supplier``.
+    *run* must have: ``company``, ``expense_threshold``.
+
+    Note: ``default_customer`` / ``default_supplier`` columns survive on the
+    doctype for f004 revert backward compat but are no longer consulted by
+    this engine (f006 Decision 2 — no rule-based party resolution).
     """
     settings = frappe.get_single("Cashew Settings")
     company_currency = run.company_currency if hasattr(run, "company_currency") else \
@@ -64,16 +75,15 @@ def _build_account_map(settings) -> dict[str, dict]:
 
 
 def _build_category_map(settings) -> dict[tuple, dict]:
-    """Return {(cashew_category, sub_category) -> {default_account, requires_party}}."""
-    result = {}
-    for row in settings.cashew_category_mapping or []:
-        if row.is_active:
-            key = (row.cashew_category, row.cashew_sub_category or "")
-            result[key] = {
-                "default_account":  row.default_account,
-                "requires_party":   bool(row.requires_party),
-            }
-    return result
+    """Return {(cashew_category, sub_category) -> {default_account, requires_party,
+    category_type, is_active}}.
+
+    Delegates to ``category_lookup.build_category_type_map`` so parser + mapping
+    + validation share one source of truth (f006 c002). Downstream callers in
+    this module read ``default_account`` and ``requires_party`` exactly as
+    before; the additional keys are inert here.
+    """
+    return build_category_type_map()
 
 
 # ── account mapping ────────────────────────────────────────────────────────────
@@ -81,10 +91,9 @@ def _build_category_map(settings) -> dict[tuple, dict]:
 def _resolve_erp_account(row: dict, acct_map: dict) -> None:
     mapping = acct_map.get(row["raw_account"])
     if not mapping:
-        row["validation_status"] = "Error"
-        row["validation_error_code"] = "CASHEW_ACCOUNT_NOT_MAPPED"
-        row["validation_error_message"] = (
-            f"No active Cashew Account Mapping for account '{row['raw_account']}'."
+        set_row_validation_error(
+            row, "CASHEW_ACCOUNT_NOT_MAPPED",
+            f"No active Cashew Account Mapping for account '{row['raw_account']}'.",
         )
         return
 
@@ -98,10 +107,9 @@ def _resolve_erp_account(row: dict, acct_map: dict) -> None:
             if partner_mapping:
                 row["resolved_external_account"] = partner_mapping["erp_account"]
             else:
-                row["validation_status"] = "Error"
-                row["validation_error_code"] = "EXTERNAL_ACCOUNT_NOT_MAPPED"
-                row["validation_error_message"] = (
-                    f"No active Cashew Account Mapping for external account '{partner_name}'."
+                set_row_validation_error(
+                    row, "EXTERNAL_ACCOUNT_NOT_MAPPED",
+                    f"No active Cashew Account Mapping for external account '{partner_name}'.",
                 )
 
 
@@ -389,28 +397,26 @@ def _fetch_open_er_api_rate(from_currency: str, to_currency: str):
 
 def _resolve_party(row: dict, run) -> None:
     """
-    Populate resolved_party only for rows whose category is marked requires_party.
-    Per-row override already in the child table takes precedence over run defaults.
+    Pre-fill ``resolved_party_type`` from ``txn_type`` — the only derivable
+    invariant per f006 Decision 1 + existing requires_party semantics.
+
+    The actual party master (``resolved_party``) is the user's job in the Vue
+    Row Explorer (c006). Engine never writes ``resolved_party`` and never
+    consults run-level default_customer / default_supplier.
+
+    ``party_source`` is deprecated; engine writes nothing to it. Existing
+    column preserved on the doctype for f004 revert backward compat.
     """
     if row.get("validation_status") == "Error":
         return
-    if not row.get("requires_party"):
-        return
 
-    # Per-row override set by the user in the child table
-    if row.get("resolved_party"):
-        if not row.get("party_source"):
-            row["party_source"] = "Preview Override"
-        return
-
-    # Fall back to run-level defaults by transaction type
     txn_type = row.get("txn_type", "")
-    if txn_type == "Income" and run.default_customer:
-        row["resolved_party"]      = run.default_customer
+    if txn_type == "Loan Receivable":
         row["resolved_party_type"] = "Customer"
-        row["party_source"]        = "Run Default"
-    elif txn_type == "Expense" and run.default_supplier:
-        row["resolved_party"]      = run.default_supplier
+    elif txn_type == "Loan Payable":
         row["resolved_party_type"] = "Supplier"
-        row["party_source"]        = "Run Default"
-    # If still unresolved: queue-time validation will fire PARTY_UNRESOLVED
+    elif txn_type == "Income" and row.get("requires_party"):
+        row["resolved_party_type"] = "Customer"
+    elif txn_type == "Expense" and row.get("requires_party"):
+        row["resolved_party_type"] = "Supplier"
+    # else: leave resolved_party_type null — no party expected

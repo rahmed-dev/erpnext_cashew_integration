@@ -19,6 +19,9 @@ from datetime import datetime
 
 import frappe
 
+from cashew_integration.importer.category_lookup import build_category_type_map
+from cashew_integration.importer.errors import set_row_validation_error
+
 # ── constants ──────────────────────────────────────────────────────────────────
 
 TRANSFER_CATEGORIES = {"Balance Correction", "Balance Transfer"}
@@ -61,6 +64,11 @@ def parse_csv(file_content: bytes, company_currency: str) -> list[dict]:
     if not rows:
         frappe.throw("The CSV file contains no data rows.", frappe.ValidationError,
                      title="FILE_EMPTY")
+    category_map = build_category_type_map()
+    for row in rows:
+        if row.get("validation_status") == "Error":
+            continue
+        _assign_txn_type(row, category_map)
     _classify_transfer_rows(rows)
     return rows
 
@@ -184,13 +192,10 @@ def _parse_single_row(idx: int, raw: dict, company_currency: str) -> dict:
     # ── item_label ─────────────────────────────────────────────────────────────
     row["item_label"] = f"{category} | {row['month_key']}"
 
-    # ── txn_type (initial pass) ────────────────────────────────────────────────
-    if category in TRANSFER_CATEGORIES:
-        row["txn_type"] = "Transfer"   # overwritten by classification pass
-    elif row["income_flag"] == "true":
-        row["txn_type"] = "Income"
-    else:
-        row["txn_type"] = "Expense"
+    # ── txn_type assigned in a second pass (parse_csv) via _assign_txn_type ────
+    # Default placeholder so downstream code that reads txn_type before the
+    # second pass doesn't KeyError. The placeholder is always overwritten.
+    row["txn_type"] = "Income" if row["income_flag"] == "true" else "Expense"
 
     # ── exchange_rate / base_amount defaults ───────────────────────────────────
     row["exchange_rate"] = None
@@ -222,6 +227,51 @@ def _compute_hash(row: dict, raw_amount_float: float) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+# ── txn_type assignment (Decision 1 4-route table) ────────────────────────────
+
+def _assign_txn_type(row: dict, category_map: dict) -> None:
+    """Set ``row['txn_type']`` per f006 Decision 1's 4-route table.
+    For Loan routes also sets ``row['resolved_route']`` (unambiguous from
+    category_type — no posting-threshold fork).
+
+    Called from ``parse_csv`` after rows are parsed and from
+    ``api.validate_import`` per row (option-b re-evaluation, so post-parse
+    edits to category_type flow through without CSV re-upload).
+
+    Transfer-family rows (category in TRANSFER_CATEGORIES) get the
+    ``Transfer`` placeholder — ``_classify_transfer_rows`` refines it later.
+    """
+    category = row.get("category", "")
+    sub      = row.get("sub_category", "") or ""
+    income   = row.get("income_flag", "")
+
+    if category in TRANSFER_CATEGORIES:
+        row["txn_type"] = "Transfer"
+        return
+
+    mapping = category_map.get((category, sub)) or category_map.get((category, ""))
+    if mapping is None:
+        # Unmapped — direction-based fallback. validate_import surfaces this
+        # as CATEGORY_NOT_MAPPED via downstream rules (existing behavior).
+        row["txn_type"] = "Income" if income == "true" else "Expense"
+        return
+
+    ctype = mapping.get("category_type")
+    if ctype == "Income":
+        row["txn_type"] = "Income"
+    elif ctype == "Expense":
+        row["txn_type"] = "Expense"
+    elif ctype == "Loan Out":
+        row["txn_type"]       = "Loan Receivable"
+        row["resolved_route"] = "Loan Receivable JE"
+    elif ctype == "Loan In":
+        row["txn_type"]       = "Loan Payable"
+        row["resolved_route"] = "Loan Payable JE"
+    else:
+        # Future enum values — direction-based fallback so no crash.
+        row["txn_type"] = "Income" if income == "true" else "Expense"
 
 
 # ── transfer classification pass ───────────────────────────────────────────────
@@ -339,7 +389,6 @@ def _partner_account(row: dict) -> str:
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _error(row: dict, code: str, message: str) -> dict:
-    row["validation_status"] = "Error"
-    row["validation_error_code"] = code
-    row["validation_error_message"] = message
+    """Thin shim — delegates to shared helper which stamps `[Row N] ` prefix."""
+    set_row_validation_error(row, code, message)
     return row
