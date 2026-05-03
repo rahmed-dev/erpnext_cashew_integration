@@ -155,10 +155,12 @@ def validate_import(run_name: str) -> dict:
             row["validation_error_code"] = None
             row["validation_error_message"] = None
 
-    # Step 0 (f006 c002 option-b): re-apply txn_type from current Cashew Category
-    # Mapping. Captures category_type edits made between parse and validate
-    # without requiring a CSV re-upload. Skips Error rows + Transfer-family
-    # rows that already went through _classify_transfer_rows at parse time.
+    # Step 0 (f006 c002 option-b): re-apply txn_type AND re-resolve
+    # resolved_account from the current Cashew Category Mapping. Captures
+    # mapping edits (category_type, default_account, requires_party) made
+    # between parse and validate without requiring a CSV re-upload. Skips
+    # Error rows + Transfer-family rows that already went through
+    # _classify_transfer_rows at parse time.
     category_map = build_category_type_map()
     for row in rows:
         if row.get("validation_status") == "Error":
@@ -166,6 +168,13 @@ def validate_import(run_name: str) -> dict:
         if row.get("txn_type") in ("Transfer", "External Transfer", "Adjustment"):
             continue
         _assign_txn_type(row, category_map)
+        cat = (
+            category_map.get((row.get("category"), row.get("sub_category") or ""))
+            or category_map.get((row.get("category"), ""))
+        )
+        if cat:
+            row["resolved_account"] = cat.get("default_account")
+            row["requires_party"]   = 1 if cat.get("requires_party") else 0
 
     # Step 1: Fetch exchange rates (ERP local → online providers).
     # This is the deliberate trigger point — rates are fetched only when the
@@ -196,9 +205,11 @@ def validate_import(run_name: str) -> dict:
                 "is_duplicate":             row.get("is_duplicate", 0),
                 "posted_doctype":           row.get("posted_doctype"),
                 "posted_docname":           row.get("posted_docname"),
-                # f006 c002 option-b — persist re-evaluated routing.
+                # f006 c002 option-b — persist re-evaluated routing + mapping.
                 "txn_type":                 row.get("txn_type"),
                 "resolved_route":           row.get("resolved_route"),
+                "resolved_account":         row.get("resolved_account"),
+                "requires_party":           row.get("requires_party", 0),
             },
         )
 

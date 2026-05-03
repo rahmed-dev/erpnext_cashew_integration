@@ -1,0 +1,133 @@
+id: f008
+name: Transaction Reconciliation (Invoices & Loans)
+status: backlog
+stage: not-started
+priority: high
+owner: bmad-fb-architect
+
+goal: >
+  Let a Cashew import row settle an existing ERP document instead of always
+  creating a fresh GL entry. Two surfaces:
+
+  1. Pay an outstanding Sales Invoice / Purchase Invoice from a Cashew row
+     so the invoice's Outstanding Amount drops to zero and AR/AP reports
+     stop carrying it.
+  2. Settle a prior Loan Receivable / Loan Payable Journal Entry from a
+     loan-repayment Cashew row so the matching party's outstanding
+     receivable/payable in AR/AP is netted off, instead of leaving the
+     original loan AND its return both showing as open balances.
+
+problem: >
+  After f006 ships, loan rows post Loan Receivable / Loan Payable JEs
+  with party on the receivable/payable line. That part works. But the
+  follow-up money movements don't reconcile against the originals:
+
+  - When a Cashew row represents the customer paying back a loan we made,
+    we currently post another Loan Receivable JE on the cash side, which
+    leaves BOTH the original "I lent X" entry and the "X paid me back"
+    entry outstanding for the same party. AR Summary shows zero net but
+    two open lines per party — confusing and unreconciled.
+
+  - For Income/Expense rows that are actually invoice payments
+    (e.g. a client transfer that settles INV-2026-001), the current
+    importer creates a JE against the income account directly. The
+    invoice's Outstanding stays at the full amount, AR Summary lists
+    it as overdue, even though the cash actually arrived.
+
+  ERPNext already has the primitives — Payment Entry against an Invoice,
+  Journal Entry "Reference" rows on the receivable/payable line that
+  reference the source SI/PI/JE. We just don't use them.
+
+user_stories:
+  - As an accountant importing a client payment row, I can match it to
+    the open Sales Invoice it settles so the invoice's Outstanding
+    Amount drops by that amount and disappears from AR Aging when fully
+    paid.
+  - As an accountant importing a vendor bill payment row, same flow
+    against an open Purchase Invoice so AP Aging clears.
+  - As an accountant importing a loan repayment row, I can match it to
+    the original Loan Receivable / Loan Payable JE for that party so
+    AR/AP no longer shows both legs as open — net is zero, both lines
+    are reconciled.
+  - As an accountant scanning the Row Explorer, rows with a candidate
+    match (open SI/PI/loan JE for the same party + amount) are flagged
+    so I don't have to hunt for them manually.
+  - As an accountant fixing a wrong match, I can unlink and re-match
+    before queueing the run. Once posted, unmatching requires an
+    explicit revert (existing f004 path).
+
+opportunities_brainstorm:
+  invoice_match:
+    - New "Match Invoice" action on Row Explorer rows whose
+      txn_type=Income with a party set (and amount > 0). Surfaces open
+      SIs for that Customer with abs(outstanding) <= row.amount; user
+      picks one or splits.
+    - Same for txn_type=Expense + Supplier → open PIs.
+    - Auto-suggest by amount + date proximity (±7 days) + party. Manual
+      pick still wins.
+    - Posting path swaps from "JE against income/expense account" to
+      "Payment Entry against the picked invoice".
+
+  loan_settle:
+    - On loan-return rows (Loan Receivable + income_flag=true, or Loan
+      Payable + income_flag=false), surface open Loan Receivable / Loan
+      Payable JEs for the same party.
+    - When user picks a prior JE to settle, the new JE includes a
+      reference row (`reference_type`, `reference_name`) on the
+      receivable/payable line so ERPNext nets them in the party ledger.
+    - Partial settlement supported — pick original JE, allocate amount
+      ≤ outstanding.
+
+  schema:
+    - New optional fields on Cashew Import Row:
+      `linked_doctype`, `linked_docname`, `linked_amount`. Null when
+      the row is a fresh GL entry (current behavior).
+    - Posting handler dispatches: linked_doctype set → reconciliation
+      path; null → existing JE/SI/PI path.
+
+  ui_surface:
+    - Row Explorer "Match" action button (new column or per-row icon)
+      opens a side modal listing candidate documents for that row.
+    - Filter preset "Unmatched" — shows rows whose category +
+      txn_type imply they should match an open invoice/loan but no
+      link is set yet.
+
+  bulk_match:
+    - Bulk "Auto-match" action that runs the suggester across all rows
+      and stages matches; user reviews and accepts/rejects per row.
+
+acceptance_notes:
+  - This is an architecture/discovery feature. Route through
+    bmad-fb-architect → bmad-fb-td → bmad-fb-dev.
+  - Architect to decide:
+      * Payment Entry vs JE-with-reference-row for invoice match.
+        ERPNext supports both; PE is cleaner for AR/AP but has its own
+        posting workflow. JE-with-reference is the same shape we
+        already use for loans, so re-using it minimises new code paths.
+      * Per-row matching only (v1) vs split-payment (one row → multiple
+        invoices). Defer split if it complicates the schema; can be a
+        follow-up.
+      * Whether the importer should auto-match high-confidence rows
+        (party + exact amount + date close) or always require manual
+        confirmation. Trade-off: speed vs audit trail.
+      * Idempotency interaction: linked rows still need source_hash
+        dedup, AND the linked invoice/JE should not be double-paid if
+        the same row is queued twice somehow.
+  - Backwards compat: existing imports without links keep working
+    exactly as today. Linking is opt-in per row.
+  - Out of scope (defer): cross-currency reconciliation, partial-pay
+    splits across multiple invoices, automatic recurring matchers.
+
+depends_on:
+  - f006   # loan posting + party plumbing must be in place first
+  - f004   # revert path must understand reconciled docs (Payment Entry
+           # cancellation cascades to the linked invoice's Outstanding)
+
+notes:
+  - This feature is the natural follow-up to f006: loans can now post,
+    but loan returns don't close the loop. Same problem shape applies
+    to invoice payments — solving both together keeps one matching UI
+    and one reconciliation code path.
+  - Real-data trigger: user lent USD 360.70 from NSave (f006 c004 test
+    case). When that's repaid, today's flow leaves the AR open. f008
+    closes it.

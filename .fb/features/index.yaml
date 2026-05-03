@@ -34,3 +34,8 @@ features:
     status: done
     stage: done
     priority: medium
+  - id: f008
+    name: Transaction Reconciliation (Invoices & Loans)
+    status: backlog
+    stage: not-started
+    priority: high

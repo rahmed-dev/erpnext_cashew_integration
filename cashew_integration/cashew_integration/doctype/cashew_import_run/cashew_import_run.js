@@ -4,6 +4,11 @@
 frappe.ui.form.on("Cashew Import Run", {
 
 	refresh(frm) {
+		// Always stop any existing timer first — refresh fires when the user
+		// navigates between records, and a timer left over from the previous
+		// record will keep polling and (worse) write its status to the new
+		// frm.doc. Re-start only if the current record is in a polling state.
+		_stop_progress_polling();
 		_update_buttons(frm);
 		if (["Queued", "Processing", "Reverting"].includes(frm.doc.status)) {
 			_start_progress_polling(frm);
@@ -261,11 +266,19 @@ function _start_progress_polling(frm) {
 			_stop_progress_polling();
 			return;
 		}
+		// Capture the polled run name at tick time. Frappe Desk reuses the
+		// same `frm` object across navigations within a doctype, so by the
+		// time the response returns the user may already be on a different
+		// record. Using a stale snapshot to write `frm.doc.status` clobbers
+		// the new record (e.g. flips a fresh Draft import to Reverted while
+		// an older run is still reverting). Bail if the name moved.
+		const polledName = frm.doc.name;
 		frappe.call({
 			method: "cashew_integration.api.get_run_progress",
-			args:   { run_name: frm.doc.name },
+			args:   { run_name: polledName },
 			callback(r) {
 				if (!r.message) return;
+				if (!frm.doc || frm.doc.name !== polledName) return;
 				const p = r.message;
 
 				// Update counters and status in-place without marking form dirty.
