@@ -104,6 +104,7 @@ def parse_and_preview(run_name: str) -> dict:
     run.rows_failed = sum(1 for r in rows if r.get("validation_status") == "Error")
     run.rows_skipped = 0
     run.rows_posted = 0
+    run.period_start, run.period_end = _compute_txn_period(rows)
     run.status = "Parsed"
     run.save(ignore_permissions=False)
     frappe.db.commit()
@@ -113,9 +114,18 @@ def parse_and_preview(run_name: str) -> dict:
         "rows_total":  run.rows_total,
         "rows_valid":  run.rows_valid,
         "rows_failed": run.rows_failed,
+        "period_start": run.period_start,
+        "period_end":   run.period_end,
         "run_status":  run.status,
         "run_config_errors": [],
     }
+
+
+def _compute_txn_period(rows: list[dict]) -> tuple[str | None, str | None]:
+    dates = [r["txn_date"] for r in rows if r.get("txn_date")]
+    if not dates:
+        return None, None
+    return min(dates), max(dates)
 
 
 @frappe.whitelist()

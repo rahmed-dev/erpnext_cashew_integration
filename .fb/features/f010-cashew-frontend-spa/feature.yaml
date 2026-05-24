@@ -1,0 +1,293 @@
+id: f010
+name: Cashew Frontend SPA (Finance Dashboard + Imports Workspace)
+status: in-progress
+stage: ui-in-progress
+priority: high
+owner: bmad-fb-ui
+
+goal: >
+  Stand up a Vue 3 SPA bundled inside the cashew_integration app (Doppio
+  pattern, www/ route, identical shape to Frappe CRM and Helpdesk) that
+  replaces the heavy Cashew Import Run desk form with a purpose-built UI.
+  Three surfaces in scope (updated 2026-05-24, UI phase — see D9/D10):
+
+  1. Finance dashboard (SPA landing) — P&L charts (income/expense), balance-
+     sheet snapshot tiles (cash/bank, receivable, payable), period selector.
+     GL-derived, NOT run aggregates. Primary manager/CFO surface.
+  2. Imports list — list of Cashew Import Runs with filters, entry point to
+     open existing run or create a new import.
+  3. Run workspace — unified create + work + view surface for a single
+     Cashew Import Run, state-driven sections (Upload / Preview /
+     RowsWorkbench / CompletedSummary) covering the full lifecycle. Replaces
+     the original "Run Detail" page concept; ships full row-level UX with
+     extensible section-slot architecture.
+
+scope_decisions:
+  surface:
+    - cashew-finance-dashboard
+    - cashew-imports-list
+    - cashew-run-workspace
+  host: >
+    SPA served at /cashew via cashew_integration/www/cashew.html, with a
+    catch-all website_route_rules entry /cashew/<path:app_path> -> cashew.
+    Vue Router uses HTML5 history mode. Authenticated via same-origin
+    Frappe session cookie + CSRF token injected through Jinja boot data.
+    Bundle built by 'bench build --app cashew_integration' through a
+    Doppio build.json hook.
+  out_of_scope:
+    - Cashew Settings / Mapping configuration UI (stays on Desk)
+    - Public-portal access (logged-in users only)
+    - f006 Row Explorer (`cashew-row-explorer` Frappe Page) — untouched by
+      f010 per arch Decision 7. SPA Run workspace owns row-level UX
+      natively; no link or embed of the Row Explorer from the SPA.
+    - Per-page role-based route hiding — D5.c graceful 403 handling at
+      shell level only (UI-phase scope flag).
+    - Run-aggregate dashboard — replaced by finance dashboard (D9). Run
+      list page already covers operator drill-in to recent activity.
+
+architecture:
+  decisions_file: .fb/features/f010-cashew-frontend-spa/arch/decisions.md
+  app_claude_md_updated: true
+  summary:
+    - D1 Doppio CLI scaffold; keep frappe-ui; PWA (vite-plugin-pwa + service
+       worker + manifest) kept on, future-proofing for installable surface
+    - D2 www/ web page + HTML5 history (mirrors Frappe CRM / Helpdesk shape).
+       Apps-screen tile = label "Cashew" + custom SVG icon (built in
+       c002). "Back to Desk" link -> /app. All surfaces responsive
+       (mobile + tablet usable v1).
+    - D3 Frappe session cookie + CSRF via Jinja boot data (no API keys).
+       Role gate: System Manager OR Accounts Manager.
+    - D4 bench build hook via Doppio build.json; commit www/cashew.html,
+       gitignore public/frontend/
+    - D5 Hybrid API discipline (binding):
+       reads via frappe.client.*; Link selectors via frappe-ui Autocomplete
+       with reference_doctype + reference_fieldname; writes reuse existing
+       cashew_integration/api.py whitelisted methods with explicit
+       frappe.has_permission; aggregates via new dashboard_summary endpoint
+    - D6 State management library choice deferred to TD; session-only view
+       state (no localStorage persistence) is a binding constraint
+    - D7 SPA Run Detail (c006) owns row-level UX natively; f006 Row
+       Explorer (`cashew-row-explorer` Frappe Page) untouched by f010
+    - D8 Frappe realtime via Socket.IO; subscribe to Cashew Import Run
+       doc_update events; degrade to 30s polling on permanent socket loss
+    - D9 Dashboard is finance overview (P&L pie + balance-sheet snapshot
+       tiles), NOT run aggregates. GL-derived. SPA landing route.
+    - D10 Run workspace unifies create + work + view (state-driven
+       sections); c005/c006/c007 renamed (imports-list / run-workspace /
+       finance-dashboard).
+    - D11 Run workspace ships full row-level UX today inside RowsWorkbench
+       section, with declarative action/column registries for future
+       row-feature extension. Closes D7.
+    - UI-phase flag (open): UI may request DocType/child-table field
+       additions to improve UX. Each request needs Architect/Dev approval
+       before Dev implements; no auto-approval.
+    - UI-phase flag (closed): per-page route gating out of scope; D5.c
+       handled at shell level only.
+
+prior_art_in_app:
+  - cashew_row_explorer.bundle.js — Vue 3 inside a Frappe Page using
+    vue.esm-bundler.js and frappe.require resolution. Useful as a pattern
+    reference for component shape only; the SPA built by f010 is a
+    different architecture (full SPA at /cashew via www/ route, not a
+    Frappe Page bundle).
+
+depends_on_features:
+  - f009 done (period_start / period_end available on Cashew Import Run
+    for dashboard aggregates)
+
+components:
+  - id: c001
+    name: spa-scaffold
+    type: build-tooling
+    depends_on: []
+    spec_file: null
+    desc: >
+      Doppio CLI bootstrap output: frontend/ folder with package.json
+      (vue 3, vue-router, pinia or composables per TD, frappe-ui,
+      socket.io-client), vite.config.js (frappeProxy:true,
+      jinjaBootData:true, lucideIcons:true), src/ skeleton, gitignore
+      entries for node_modules, dist, public/frontend.
+  - id: c002
+    name: spa-host-route
+    type: route-and-jinja-entry
+    depends_on: []
+    spec_file: null
+    desc: >
+      cashew_integration/www/cashew.html (built shell, committed) +
+      cashew_integration/www/cashew.py (no_cache=1, boot dict injection:
+      csrf_token, session_user, sysdefaults, default_company,
+      default_currency, default_period_*).
+      Permission gate (per D3.a): check_app_permission() returns True if
+      session user holds Role "System Manager" OR "Accounts Manager".
+      Otherwise raise PermissionError -> Frappe redirects to /login.
+      hooks.py website_route_rules catch-all /cashew/<path:app_path> ->
+      cashew. hooks.py app_icon_url = "/assets/cashew_integration/images/
+      cashew-app-icon.svg", app_icon_route = "/cashew", app_icon_title =
+      "Cashew" for the Apps screen tile. SVG icon asset authored as part
+      of this component (committed at public/images/cashew-app-icon.svg).
+  - id: c003
+    name: build-hook
+    type: build-tooling
+    depends_on:
+      - c001
+      - c002
+    spec_file: null
+    desc: >
+      Doppio build.json trigger so 'bench build --app cashew_integration'
+      runs 'yarn install && yarn build' inside frontend/, outputs to
+      cashew_integration/public/frontend/, copies index.html to
+      cashew_integration/www/cashew.html. Confirm dev loop:
+      'bench start' + 'cd frontend && yarn dev' with HMR at :8080.
+  - id: c004
+    name: spa-router-shell
+    type: ui-shell
+    depends_on:
+      - c001
+    spec_file: null
+    desc: >
+      App.vue, router.js (createWebHistory; routes per D9/D10:
+      `/` -> finance dashboard (landing), `/runs` -> imports list,
+      `/runs/new` -> run workspace (fresh state), `/runs/:run_name` ->
+      run workspace (state-driven)). Shared responsive layout shell:
+      LEFT SIDEBAR with app-switcher dropdown at top (Cashew / "Back to
+      Desk" -> /app / placeholder for other apps) and nav items
+      (Dashboard, Imports). Mobile-collapsible sidebar. Session store
+      reads window.boot. All child pages (c005, c006, c007) inherit
+      responsive primitives from this shell per D2.c.
+      Shell-level global error-toast boundary handles D5.c (graceful
+      403 / "Permission denied" surfaces without crashing the route).
+  - id: c005
+    name: imports-list-page
+    type: ui-page
+    depends_on:
+      - c004
+    spec_file: null
+    desc: >
+      List view backed by frappe.client.get_list("Cashew Import Run").
+      Filters by status, date range, company. Sort, pagination. "+ New
+      Import" button routes to /runs/new. Session-only view state per
+      D6 constraint. Any Link selectors use frappe-ui Autocomplete with
+      reference_doctype + reference_fieldname per D5 rule 2.
+  - id: c006
+    name: run-workspace-page
+    type: ui-page
+    depends_on:
+      - c004
+    spec_file: null
+    desc: >
+      Unified create + work + view workspace for a single Cashew Import
+      Run (D10). Single Vue page component; routes `/runs/new` and
+      `/runs/:run_name` both resolve here. State-driven sections render
+      based on run.status:
+      - UploadSection (Draft): CSV file picker, parse trigger.
+      - PreviewSection (Parsed): row preview + parse stats, validate.
+      - RowsWorkbench (Validating/Validated): full row-level UX (D11) —
+        table with filters (status, txn_type, category_type, category,
+        raw_account, posted state), column presets, inline party edit,
+        validation-fix modal, bulk select + bulk party-set, search,
+        status pills. Frappe-ui table/form/modal primitives.
+        Declarative action + column registries for future row-feature
+        extension (D11).
+      - CompletedSummary (Queued/Posted/Reverted): read-mostly results
+        view + revert action.
+      Reads via frappe.client.get_doc; writes reuse existing
+      cashew_integration/api.py whitelisted methods (parse_and_preview,
+      validate_import, queue_run, revert_run, set_row_party,
+      resolve_validation, etc). Socket-driven live status from c008.
+      No link or embed of f006 Row Explorer.
+      Sizing: largest component in f010; section-slot architecture
+      keeps each subcomponent testable in isolation.
+  - id: c007
+    name: finance-dashboard-page
+    type: ui-page
+    depends_on:
+      - c004
+      - c009
+    spec_file: null
+    desc: >
+      Finance dashboard (D9) — SPA landing at `/`. Calls
+      cashew_integration.api.dashboard_summary (c009) for GL-derived
+      aggregates. Strawman content: income vs expense chart, top
+      categories by income/expense, balance-sheet snapshot tiles (cash/
+      bank, receivable, payable), period selector (defaults TD-decided),
+      lightweight recent-activity drill into imports list. Charting
+      library TD-decided (strawman: frappe-ui chart wrapper or chart.js).
+      Period state session-only per D6.
+  - id: c008
+    name: realtime-client
+    type: ui-infra
+    depends_on:
+      - c004
+    spec_file: null
+    desc: >
+      Socket.IO connection bootstrap. Subscribes to doc_update events
+      for Cashew Import Run (list-level and currently-viewed doc).
+      Connection-status indicator. Degrades to 30s polling on permanent
+      socket failure (TD-time spec).
+  - id: c009
+    name: dashboard-summary-endpoint
+    type: api
+    depends_on: []
+    spec_file: null
+    desc: >
+      New whitelisted method cashew_integration.api.dashboard_summary
+      (period_start?, period_end?, company?). Scope updated per D9 —
+      returns GL-derived finance aggregates, NOT run aggregates. Calls
+      frappe.has_permission("GL Entry", "read") at entry. Internally
+      uses frappe.get_all over GL Entry + Account with
+      ignore_permissions=False so row-level perms still apply.
+      Strawman response shape:
+        {
+          period: {start, end},
+          income_total, expense_total,
+          income_by_category: [{category, amount}, ...],
+          expense_by_category: [{category, amount}, ...],
+          balance_tiles: {cash_bank, receivable, payable, ...},
+          recent_runs: [{name, status, period, counts}, ...]
+        }
+      Exact shape TD-finalized at c007 component spec.
+  - id: c010
+    name: api-permission-audit
+    type: refactor
+    depends_on: []
+    spec_file: null
+    desc: >
+      Audit every whitelisted write method in cashew_integration/api.py
+      added by f001 / f004 / f006. Confirm each calls
+      frappe.has_permission(doctype, ptype, doc=...) at entry. Add where
+      missing. Behaviour of those endpoints unchanged otherwise.
+  - id: c011
+    name: realtime-emission-audit
+    type: refactor
+    depends_on: []
+    spec_file: null
+    desc: >
+      Audit cashew worker code paths that mutate Cashew Import Run state.
+      Confirm each goes through frappe.db.set_value() / doc.save() (which
+      auto-emit doc_update for realtime). Any bare SQL UPDATE must add a
+      paired frappe.publish_realtime(). Pre-flight for D8 — minimal
+      changes.
+
+status_history:
+  - 2026-05-24 arch-done (bmad-fb-architect) — 8 decisions recorded;
+    f006 dep dropped; row-explorer relationship deferred to UI phase
+  - 2026-05-24 ui-in-progress (bmad-fb-ui) — page inventory locked
+    (3 pages: finance-dashboard, imports-list, run-workspace). Arch
+    deltas D9/D10/D11 recorded. Two UI-phase scope flags raised: open
+    (doctype field-addition channel), closed (per-page perm UX
+    deferred). c005/c006/c007 renamed in component list; c004 shell
+    updated with sidebar shape; c009 endpoint re-scoped to GL-derived
+    aggregates.
+
+next_step: >
+  Continue UI phase: per-page component breakdown + HTML wireframes for
+  finance-dashboard, imports-list, run-workspace. Sequence:
+  1. finance-dashboard (lowest interaction surface, anchors data shape
+     for c009 update).
+  2. imports-list (depends on dashboard period-selector decisions for
+     consistency).
+  3. run-workspace (largest; needs section-by-section approval —
+     Upload, Preview, RowsWorkbench, CompletedSummary).
+  After UI completes, route via bmad-fb-orch to bmad-fb-td for specs.
+
+blocked_by: []

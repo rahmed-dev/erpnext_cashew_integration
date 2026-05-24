@@ -1,0 +1,33 @@
+id: f009
+name: Transaction Period Detection
+status: done
+stage: done
+owner: bmad-fb-quick
+
+goal: >
+  Detect the min and max transaction date from a parsed Cashew CSV and
+  surface them on the Cashew Import Run record so an operator can see the
+  period covered by the file at a glance.
+
+components:
+  - id: c001
+    name: Schema — period_start + period_end Date fields on Cashew Import Run (read-only)
+    stage: done
+  - id: c002
+    name: Compute — min/max txn_date in parse_and_preview; persist on run; include in API response
+    stage: done
+
+acceptance_notes:
+  - period_start = min(txn_date) over rows with a valid txn_date.
+  - period_end   = max(txn_date) over rows with a valid txn_date.
+  - Rows with parse error (MISSING_DATE / unparseable) are excluded.
+  - Both fields null when no row carries a valid txn_date.
+  - Recomputed on every parse_and_preview call (Draft / Parsed / Validated re-parse).
+  - Fields visible in the Results section of Cashew Import Run form, read-only.
+
+verification:
+  - Open a Draft Cashew Import Run with an attached CSV; click Parse + Preview.
+  - Form's Results section shows Period Start + Period End matching the
+    file's first and last txn_date.
+  - Re-parse after editing mappings — period values remain consistent
+    (recomputed off the same parser output).

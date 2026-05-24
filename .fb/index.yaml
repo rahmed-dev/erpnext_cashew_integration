@@ -1,51 +1,53 @@
+app: cashew_integration
+
 features:
   - id: f001
+    slug: cashew-csv-import
     name: Cashew CSV Import
     status: done
     stage: done
-    priority: high
   - id: f002
+    slug: cashew-automated-sync
     name: Cashew Automated Sync
     status: cancelled
-    stage: not-started
-    priority: medium
+    stage: cancelled
   - id: f003
+    slug: validation-pipeline-improvements
     name: Validation Pipeline Improvements
     status: done
     stage: done
-    priority: medium
   - id: f004
+    slug: import-run-revert
     name: Import Run Revert
     status: done
     stage: done
-    priority: high
   - id: f005
+    slug: setup-wizard
     name: Setup Wizard — Seed from CSV
     status: done
     stage: done
-    priority: high
   - id: f006
+    slug: rules-clarity-and-party-resolution
     name: Rules Clarity & Party Resolution v2
-    status: in-progress
-    stage: arch-done
-    priority: high
+    status: pending-review
+    stage: dev-done
   - id: f007
+    slug: customizations-export-migration
     name: Customizations Export Migration
     status: done
     stage: done
-    priority: medium
   - id: f008
+    slug: transaction-reconciliation
     name: Transaction Reconciliation (Invoices & Loans)
     status: backlog
     stage: not-started
-    priority: high
   - id: f009
+    slug: transaction-period-detection
     name: Transaction Period Detection
     status: done
     stage: done
-    priority: medium
   - id: f010
+    slug: cashew-frontend-spa
     name: Cashew Frontend SPA (Runs + Dashboard)
-    status: in-progress
-    stage: arch-done
-    priority: high
+    status: backlog
+    stage: not-started
