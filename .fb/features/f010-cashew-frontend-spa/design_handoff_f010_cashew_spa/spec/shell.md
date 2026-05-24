@@ -1,11 +1,9 @@
 # App Shell — Cashew SPA
 
 **Component:** `c004 spa-router-shell`
-**Purpose:** Persistent chrome around every page in the Cashew SPA. Provides navigation, app identity, and shell-level concerns (error toasts, realtime indicator, accent color theming). Same shell wraps Finance Dashboard, Imports List, Run Workspace, and Settings.
+**Purpose:** Persistent chrome around every page in the Cashew SPA. Provides navigation, app identity, and shell-level concerns (error toasts, realtime indicator). Same shell wraps Finance Dashboard, Imports List, and Run Workspace.
 
-This document is for the design tool. Every page brief references this shell — Designer should render the shell identically on all four pages.
-
-**Updated 2026-05-24** (ui-delta-settings): Settings nav item added (third); accent color theming responsibility added (D14).
+This document is for the design tool. Every page brief references this shell — Designer should render the shell identically on all three pages.
 
 ---
 
@@ -41,7 +39,6 @@ Fixed two-column on desktop / tablet. Collapsible single-column on mobile.
 │                 │                                          │
 │  📊  Dashboard  │                                          │
 │  📄  Imports    │                                          │
-│  ⚙️   Settings   │                                          │
 │                 │                                          │
 │                 │                                          │
 │  ─────────────  │                                          │
@@ -100,7 +97,7 @@ Pure page content. Pages own their own header (page title, action bar, period se
 
 ### 2. PrimaryNav
 
-**Purpose:** Main page navigation. Three items in v1.
+**Purpose:** Main page navigation. Two items in v1.
 
 **Items:**
 
@@ -108,7 +105,6 @@ Pure page content. Pages own their own header (page title, action bar, period se
 |---|---|---|---|---|
 | 1 | `bar-chart-2` | Dashboard | `/` | Path is exactly `/` |
 | 2 | `file-text` | Imports | `/runs` | Path starts with `/runs` (covers list + workspace) |
-| 3 | `settings` | Settings | `/settings` | Path starts with `/settings` |
 
 **Display per item:** Icon (20×20) + label, left-aligned, full sidebar width clickable. Active item is visually distinct (filled background + bold text or accent border).
 
@@ -134,10 +130,9 @@ Pure page content. Pages own their own header (page title, action bar, period se
 **Menu items:**
 | Label | Target |
 |---|---|
+| Settings | `/app/cashew-settings` (back to Desk single doc) |
 | Help | `https://docs.frappe.io` *(or wherever)* — placeholder, can omit v1 |
 | Sign out | `/api/method/logout` (Frappe standard) |
-
-> Note: "Settings" is intentionally **not** in this menu — Settings is its own primary nav item now (third sidebar item, route `/settings`). Avoids two entry points to the same surface.
 
 **Data source:** `window.boot.session_user` (full name + image fetched once on mount via `frappe.client.get_value('User', user, ['full_name', 'user_image'])`).
 
@@ -180,34 +175,6 @@ Hover/tap shows a small tooltip with the underlying detail (e.g. "Last update 12
 
 ---
 
-### 6. ThemeController (shell-level, invisible — D14)
-
-**Purpose:** Single source of truth for the SPA's accent color. Reads `Cashew Settings.accent_color`, maps preset name to the four CSS custom properties, applies them on `<html>`, and re-applies whenever the setting changes.
-
-**Inputs:**
-- On boot: `window.boot.accent_color` (string preset name, default `"Indigo"`).
-- On Settings save: emitted by Settings page after a successful `set_value` call.
-- On realtime: shell subscribes to `Cashew Settings` `doc_update` events (D8 extension); event handler re-reads `accent_color` and re-applies.
-
-**Outputs (CSS custom properties on `<html>`):**
-
-| Property | Source |
-|---|---|
-| `--cs-accent` | preset's primary value |
-| `--cs-accent-700` | preset's hover/active value |
-| `--cs-accent-100` | preset's focus-ring background |
-| `--cs-accent-50` | preset's subtle fill |
-
-**Preset → token table** lives in arch `decisions.md` D14 (TD finalizes the exact hex for non-Indigo/Monochrome presets per Tailwind palette references).
-
-**Exposed composable:** `useAccentTheme()` returns `{ currentPreset, applyAccentTheme(presetName) }`. Settings page uses it for live preview on chip click + revert on Discard.
-
-**A11y side-effect:** When theme changes, shell announces the new preset via a `aria-live="polite"` region — `Accent color set to {preset}.`
-
-**Not visible by default — purely a side-effect controller.**
-
----
-
 ## Responsive behaviour
 
 | Breakpoint | Behaviour |
@@ -235,5 +202,4 @@ Sidebar drawer animation: slide-in from left, 200ms.
 - Render the page title or breadcrumb — pages own their header
 - Inject a global search bar — Imports List page has its own search; dashboard doesn't need one
 - Provide a notifications inbox — out of scope for v1
-- Provide role-aware nav hiding — D5.c flag (closed); all logged-in users see all three nav items
-- Manage user preferences UI — the Settings page (c012) owns that; shell only consumes the result (accent color) via ThemeController
+- Provide role-aware nav hiding — D5.c flag (closed); all logged-in users see both nav items

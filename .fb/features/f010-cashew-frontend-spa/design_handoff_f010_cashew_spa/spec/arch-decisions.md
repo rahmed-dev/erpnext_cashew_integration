@@ -5,7 +5,7 @@ Owner: bmad-fb-architect
 Status: in-progress (decisions recorded as user confirms)
 Started: 2026-05-24
 
-Scope (from feature.yaml; updated 2026-05-24 by UI phase — see D9/D10/D11/D12/D13/D14):
+Scope (from feature.yaml; updated 2026-05-24 by UI phase — see D9/D10/D11):
 - **Finance dashboard** as SPA landing — P&L (income/expense charts) + balance-sheet
   snapshots (cash/bank, receivable) over a selectable period. Replaces the original
   run-aggregate dashboard concept (D9).
@@ -15,15 +15,9 @@ Scope (from feature.yaml; updated 2026-05-24 by UI phase — see D9/D10/D11/D12/
   Import Run. State-driven sections (Upload / Preview / RowsWorkbench /
   CompletedSummary) cover the full lifecycle (Draft → Parsed → Validated → Queued →
   Completed/Reverted). Replaces the original "Run Detail" page (D10).
-- **Settings** — Appearance (accent color) + Default Company (surface existing
-  Cashew Settings.company). New 4th SPA surface added 2026-05-24 by UI phase (D12).
-  Mapping table CRUD remains on Desk. No global per-run defaults introduced.
 - Doppio-pattern SPA inside `cashew_integration` app
-- OOS: Mapping table CRUD (Cashew Category Mapping + Cashew Account Mapping, stays
-  on Desk), global per-run defaults (default_customer / default_supplier /
-  balance_adjustment_account / je_rounding_tolerance remain per-run only — user
-  direction 2026-05-24), public-portal, Row Explorer replacement, role-gated
-  per-page route hiding
+- OOS: settings/mapping config UI (stays on Desk), public-portal, Row Explorer
+  replacement, role-gated per-page route hiding
 
 Dependencies: f009 done (period_start / period_end on Cashew Import Run).
 Blockers: none.
@@ -338,18 +332,18 @@ The state-driven sections inside c006 are first-class extension points:
 
 ---
 
-## UI-phase scope flag (closed, 2026-05-24) — UI-driven DocType field additions
+## UI-phase scope flag (open) — UI-driven DocType field additions
 
-**Flag (closed, 2026-05-24, UI phase):** During wireframe + component-breakdown work, UI surfaced three concrete schema additions. User approved them on 2026-05-24 (post design-handoff review). Captured as D13. A fourth field (`row_note` on Cashew Import Row) was withdrawn as redundant — Cashew Import Row already has a `note` field; UI consumes the existing one.
+**Flag (open, 2026-05-24, UI phase):** During wireframe + component-breakdown work, UI may identify that the import workspace would be materially clearer if `Cashew Import Run` (parent) or `Cashew Import Row` (child table) gained one or more new fields. User explicitly authorized this kind of request during UI phase ("we are open to adding new fields in the doctypes and child table as needed").
 
-**Rules (still binding for any future request):**
-- UI captures any new request in the relevant page file (`{app}/.fb/ui/pages/{page}.md`) under a "DocType field requests" heading, including: field name, fieldtype, why UX needs it, which component depends on it.
+**Rules:**
+- UI captures any such request in the relevant page file (`{app}/.fb/ui/pages/{page}.md`) under a "DocType field requests" heading, including: field name, fieldtype, why UX needs it, which component depends on it.
 - The flag itself is NOT a green light to implement. Architect/Dev must approve each addition before Dev does the doctype change.
 - Approved additions get captured as their own decision (D12, D13, …) in this file, with a one-line summary in the parent feature.yaml `status_history`.
 
-**Why kept binding:** Doctype schema changes are real architectural commitments (migrations, fixtures, downstream report assumptions). The UI phase is allowed to surface them but not to commit to them unilaterally.
+**Why:** Doctype schema changes are real architectural commitments (migrations, fixtures, downstream report assumptions). The UI phase is allowed to surface them but not to commit to them unilaterally.
 
-**Status (final):** 3 additions approved on 2026-05-24, captured as D13. 1 request withdrawn (`row_note`) as redundant. Flag closed.
+**Status:** No concrete requests captured yet. Will accumulate as UI breakdown progresses.
 
 ---
 
@@ -360,103 +354,4 @@ The state-driven sections inside c006 are first-class extension points:
 **D5.c still binds:** Any API call may return 403; the SPA must surface a graceful error (toast + don't crash the route). This is implemented once at the shell level (c004's global error boundary), not per-page.
 
 **Why:** User direction (UI phase, 2026-05-24). Per-page route gating adds UX complexity (role-aware sidebar, redirect-from-forbidden-route, etc.) that the current user base (System Manager OR Accounts Manager only) doesn't need. Revisit if a "view-only" or "read-only auditor" role is ever introduced.
-
----
-
-## Decision 12 — Settings page added as 4th SPA surface (2026-05-24, UI phase)
-
-**Decision:** Add a `/settings` page to the SPA as the 4th surface (alongside finance-dashboard, imports-list, run-workspace). Two sections only:
-1. **Appearance** — accent color picker. 5 presets from the design handoff (Indigo / Teal / Burnt Orange / Monochrome / Cyan). Writes `Cashew Settings.accent_color` (D14).
-2. **Default Company** — surfaces the existing `Cashew Settings.company` field. Frappe-ui `<Autocomplete reference_doctype="Company">` (D5.2). No new fields needed.
-
-**Mapping CRUD stays on Desk.** Settings page renders a "Manage on Desk →" deep-link for each mapping table (Cashew Category Mapping, Cashew Account Mapping) routing to `/app/cashew-category-mapping` and `/app/cashew-account-mapping` respectively. Preserves the original f010 OOS constraint while giving operators a discoverable jump-off point.
-
-**No global per-run defaults.** Fields like `default_customer` / `default_supplier` / `balance_adjustment_account` / `je_rounding_tolerance` remain per-run on Cashew Import Run. User explicitly declined a global-fallback path: defaults set per-import, not site-wide.
-
-**Routing & navigation:**
-- Route: `/settings` (HTML5 history, same routing pattern as other pages).
-- Sidebar: third nav item below Imports. Icon: `settings` (lucide). Active state via prefix-match `/settings`.
-- Component id: **c012** `settings-page` (ui-page). Depends on c004 (shell) + Cashew Settings doctype.
-
-**Permission UX:**
-- Cashew Settings has `write` perm restricted to System Manager (per doctype JSON). Accountant role has read-only.
-- Settings page fetches via `frappe.client.get_doc('Cashew Settings', 'Cashew Settings')` (D5.1).
-- Inputs render disabled if user lacks write perm on Cashew Settings (boot dict carries the perm flag). Save button hidden. No route-level gating (consistent with D5.c shell-level 403 handling).
-- Saving uses `frappe.client.set_value('Cashew Settings', 'Cashew Settings', {field: value})` per D5.1. No new writes endpoint needed.
-
-**Theme propagation (D14 detail):** On Settings save AND on SPA boot, the shell binds `Cashew Settings.accent_color` → CSS custom property `--cs-accent` (and `--cs-accent-700` / `--cs-accent-100` / `--cs-accent-50` derived per the design tokens table for each preset). Single source of truth in CSS; every page consumes via Tailwind arbitrary-value classes or the existing token names.
-
-**Rationale:**
-- User direction (2026-05-24): theme picker + Settings surface inside SPA. Settings was originally OOS — now lifted in part. Mapping CRUD stays out.
-- Smaller commitment than full Settings/Mapping migration. Operators get one-click theme control + Default Company view from inside the SPA instead of bouncing to Desk.
-- Re-uses Cashew Settings Single doctype as the storage substrate. No new doctype.
-
-**Trade-off accepted:**
-- Lifting "Cashew Settings stays on Desk" partially — but mapping editors still stay on Desk, so the bigger out-of-scope surface is preserved.
-- App-wide accent color (not per-user). Acceptable for a small finance team; revisit if a multi-user theming need emerges (would require a per-user preferences doctype, not just a Single).
-
-**Open within this decision:**
-- D12.a: Live preview behavior — should picker apply theme instantly (and revert on cancel) or only on Save? **Default:** instant live preview, dirty-state save bar, revert on cancel/navigate-away. TD/Designer can refine.
-- D12.b: Mapping deep-links — open in new tab or same tab? **Default:** same tab (`<a target="_self">`); operator returns via Back to Desk + sidebar nav.
-
----
-
-## Decision 13 — Approved DocType schema additions for f010 (2026-05-24, UI phase)
-
-**Decision:** Three concrete fields approved for addition. Builds on the UI-phase open flag (now closed); user confirmed 2026-05-24.
-
-| # | DocType | Fieldname | Fieldtype | Options / config | Why UX needs it | Consumed by |
-|---|---|---|---|---|---|---|
-| 13.1 | `Cashew Settings` | `accent_color` | Select | `Indigo\nTeal\nBurnt Orange\nMonochrome\nCyan` — default `Indigo` | App-wide theme picker (D12, D14) | Settings page Appearance section; shell binds to `--cs-accent` |
-| 13.2 | `Cashew Import Run` | `notes` | Small Text | — | Operator note on a run ("imported with Acme's revised April export") — no place to record today | run-workspace `RunHeader` row 2 + Upload section optional textarea |
-| 13.3 | `Cashew Import Row` | `validation_severity` | Select | `Error\nWarning\nInfo` — default `Error` (only meaningful when `validation_status = 'Error'`) | Today `validation_status` only has Valid/Error/Skipped. Severity lets the workbench surface non-blocking issues (e.g. "unusually large amount for this category") without blocking validate/queue. Improves operator signal-to-noise. | RowsWorkbench filter facet + status pill modifier; future validators emit Warning/Info |
-
-**Withdrawn:** `Cashew Import Row.row_note` (originally requested at Low priority). Reason: Cashew Import Row already has a `note` field (carried from CSV parse → operator can edit). UI surfaces the existing field; no new column needed.
-
-**Placement:**
-- `accent_color` — append to Cashew Settings after `company`, before the mapping tables.
-- `notes` — append to Cashew Import Run after `diagnostics_file`, inside its own collapsed Section Break ("Operator Notes").
-- `validation_severity` — append to Cashew Import Row immediately after `validation_status`. `depends_on: eval:doc.validation_status=='Error'`.
-
-**Migration:** Frappe DocType JSON change + `bench migrate`. No data backfill required (new optional fields, blank for existing records).
-
-**Validator integration (13.3 only):** `api.validate_import` continues to set `validation_status = 'Error'` for blocking failures. New severity field defaults to `Error` when status=Error. A future validator class may emit Warning/Info — out of scope for f010 but the field is in place. Workbench treats `Warning` rows as Queueable (do not block `queue_run`); `Error` rows still block.
-
-**Dev component id:** **c013** `schema-additions` (doctype-change). Depends on nothing within f010; ships before c012 / c006 builds that consume the fields.
-
-**Rationale:** All three are low-risk additive changes. None alters existing semantics. Each unlocks a UI affordance that the original schema couldn't express.
-
----
-
-## Decision 14 — Accent color storage: single Cashew Settings field, app-wide (2026-05-24, UI phase)
-
-**Decision:** Accent color persists as `Cashew Settings.accent_color` (Select, 5 presets). **App-wide** value — every SPA session reads the same setting; not per-user.
-
-**Boot wiring:**
-- `cashew_integration/www/cashew.py` adds `accent_color = frappe.db.get_single_value('Cashew Settings', 'accent_color') or 'Indigo'` to the boot dict.
-- SPA shell on init reads `window.boot.accent_color`, maps preset name → token values per the design-tokens preset table, and sets the 4 CSS custom properties on `<html>` (or `<body>`): `--cs-accent`, `--cs-accent-700`, `--cs-accent-100`, `--cs-accent-50`.
-- On save from Settings page, shell re-applies tokens immediately (no reload). Other open tabs pick up the change via the existing `doc_update` realtime subscription on Cashew Settings (D8) — TD adds `Cashew Settings` to the SPA's realtime subscription set.
-
-**Preset → token table (TD finalizes exact hex; design handoff `DESIGN_TOKENS.md` already lists Indigo defaults):**
-
-| Preset | `--cs-accent` | `--cs-accent-700` | `--cs-accent-100` | `--cs-accent-50` |
-|---|---|---|---|---|
-| Indigo (default) | `#4f46e5` | `#4338ca` | `#e0e7ff` | `#eef2ff` |
-| Teal | TD-picks (Tailwind teal-600 family) | teal-700 | teal-100 | teal-50 |
-| Burnt Orange | TD-picks (Tailwind orange-600 family) | orange-700 | orange-100 | orange-50 |
-| Monochrome | `#1f2937` (slate-800) | `#0f172a` | slate-200 | slate-100 |
-| Cyan | TD-picks (Tailwind cyan-600 family) | cyan-700 | cyan-100 | cyan-50 |
-
-**Rationale:**
-- Cashew Settings is already a Single doctype — adding one Select field is the cheapest persistent storage path.
-- App-wide vs per-user: chosen explicitly by user 2026-05-24. Single-team finance app; not enough divergent operators to justify a per-user preferences doctype today.
-- D6 (session-only state) does NOT apply — that rule covered transient view state like active filters, not user-set persistent preferences. Theme is a deliberate persisted preference.
-
-**Trade-off accepted:**
-- One user changing the theme changes it for everyone. Acceptable for current team shape.
-- Cost to flip to per-user later = move the field off Cashew Settings into a new "Cashew User Preferences" Single-per-user doctype + adjust boot dict + adjust subscription. Reversible with one migration.
-
-**Open within this decision:**
-- D14.a: Whether to expose preset preview swatches in the picker (recommended) or just labels. **Default:** swatches.
-- D14.b: TD picks the exact Tailwind hex for the 3 non-Indigo/Monochrome presets. Designer's prototype includes draft values in `DESIGN_TOKENS.md`.
 

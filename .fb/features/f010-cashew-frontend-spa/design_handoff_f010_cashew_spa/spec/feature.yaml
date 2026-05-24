@@ -1,5 +1,5 @@
 id: f010
-name: Cashew Frontend SPA (Dashboard + Imports + Workspace + Settings)
+name: Cashew Frontend SPA (Finance Dashboard + Imports Workspace)
 status: in-progress
 stage: ui-in-progress
 priority: high
@@ -9,7 +9,7 @@ goal: >
   Stand up a Vue 3 SPA bundled inside the cashew_integration app (Doppio
   pattern, www/ route, identical shape to Frappe CRM and Helpdesk) that
   replaces the heavy Cashew Import Run desk form with a purpose-built UI.
-  Four surfaces in scope (updated 2026-05-24, UI phase — see D9/D10/D12):
+  Three surfaces in scope (updated 2026-05-24, UI phase — see D9/D10):
 
   1. Finance dashboard (SPA landing) — P&L charts (income/expense), balance-
      sheet snapshot tiles (cash/bank, receivable, payable), period selector.
@@ -21,17 +21,12 @@ goal: >
      RowsWorkbench / CompletedSummary) covering the full lifecycle. Replaces
      the original "Run Detail" page concept; ships full row-level UX with
      extensible section-slot architecture.
-  4. Settings — Appearance (accent color picker, 5 presets, writes
-     Cashew Settings.accent_color) + Default Company (surfaces existing
-     Cashew Settings.company). Mapping CRUD stays on Desk via deep-link.
-     Added 2026-05-24 by UI phase per D12.
 
 scope_decisions:
   surface:
     - cashew-finance-dashboard
     - cashew-imports-list
     - cashew-run-workspace
-    - cashew-settings
   host: >
     SPA served at /cashew via cashew_integration/www/cashew.html, with a
     catch-all website_route_rules entry /cashew/<path:app_path> -> cashew.
@@ -40,16 +35,8 @@ scope_decisions:
     Bundle built by 'bench build --app cashew_integration' through a
     Doppio build.json hook.
   out_of_scope:
-    - Cashew Category / Account mapping CRUD UI (stays on Desk; Settings
-      page provides a deep-link to /app/cashew-category-mapping and
-      /app/cashew-account-mapping per D12).
-    - Global per-run defaults on Cashew Settings (default_customer /
-      default_supplier / balance_adjustment_account /
-      je_rounding_tolerance remain per-run on Cashew Import Run; user
-      direction 2026-05-24, no global fallbacks introduced).
-    - Per-user theming (accent color is app-wide per D14; revisit if
-      multi-user theming need emerges).
-    - Public-portal access (logged-in users only).
+    - Cashew Settings / Mapping configuration UI (stays on Desk)
+    - Public-portal access (logged-in users only)
     - f006 Row Explorer (`cashew-row-explorer` Frappe Page) — untouched by
       f010 per arch Decision 7. SPA Run workspace owns row-level UX
       natively; no link or embed of the Row Explorer from the SPA.
@@ -91,23 +78,9 @@ architecture:
     - D11 Run workspace ships full row-level UX today inside RowsWorkbench
        section, with declarative action/column registries for future
        row-feature extension. Closes D7.
-    - D12 Settings page added as 4th SPA surface at /settings. Two
-       sections: Appearance (accent color, 5 presets) + Default Company
-       (existing Cashew Settings.company). Mapping CRUD stays on Desk
-       (deep-link). No new global per-run defaults. New component c012.
-    - D13 Three approved DocType schema additions (component c013):
-       (a) Cashew Settings.accent_color (Select, 5 presets, default Indigo);
-       (b) Cashew Import Run.notes (Small Text);
-       (c) Cashew Import Row.validation_severity (Select Error/Warning/Info).
-       Withdrew Cashew Import Row.row_note (redundant — `note` field
-       already exists on Cashew Import Row).
-    - D14 Accent color stored on Cashew Settings (Single doctype), app-wide
-       (not per-user). Boot dict carries it; shell maps preset -> 4 CSS
-       custom properties (--cs-accent, -700, -100, -50). Realtime
-       Cashew Settings doc_update propagates theme to all open SPA tabs.
-    - UI-phase flag (closed, 2026-05-24): doctype field-addition channel
-       closed after D13 captured 3 approved additions; future additions
-       follow the same approval rule.
+    - UI-phase flag (open): UI may request DocType/child-table field
+       additions to improve UX. Each request needs Architect/Dev approval
+       before Dev implements; no auto-approval.
     - UI-phase flag (closed): per-page route gating out of scope; D5.c
        handled at shell level only.
 
@@ -294,54 +267,6 @@ components:
       auto-emit doc_update for realtime). Any bare SQL UPDATE must add a
       paired frappe.publish_realtime(). Pre-flight for D8 — minimal
       changes.
-  - id: c012
-    name: settings-page
-    type: ui-page
-    depends_on:
-      - c004
-      - c013
-    spec_file: null
-    desc: >
-      Settings page (D12) at SPA route `/settings`. Third sidebar nav
-      item (lucide `settings` icon). Two sections:
-      - Appearance: accent color picker, 5 presets (Indigo / Teal /
-        Burnt Orange / Monochrome / Cyan). Live preview applies tokens
-        on selection; dirty-state save bar persists on click. Writes
-        Cashew Settings.accent_color via frappe.client.set_value (D5.1).
-      - Default Company: frappe-ui <Autocomplete reference_doctype="Company">
-        bound to Cashew Settings.company. Writes via the same path.
-      Plus a "Manage on Desk" link group for the two mapping doctypes
-      (Cashew Category Mapping, Cashew Account Mapping) — same-tab
-      anchor to /app/{doctype-route}. No mapping CRUD in SPA.
-      Permission: read-only mode when user lacks write perm on
-      Cashew Settings (Accountant role); inputs disabled + save hidden.
-      Reads via frappe.client.get_doc("Cashew Settings", "Cashew Settings").
-      Theme propagation: on save, shell re-applies CSS custom properties
-      from preset table; other open tabs pick up via doc_update
-      subscription on Cashew Settings (D14).
-  - id: c013
-    name: schema-additions
-    type: doctype-change
-    depends_on: []
-    spec_file: null
-    desc: >
-      Three additive DocType changes approved 2026-05-24 (D13). No data
-      backfill; all fields optional / default-blank for existing records.
-      - Cashew Settings.accent_color (Select, options
-        "Indigo\nTeal\nBurnt Orange\nMonochrome\nCyan", default
-        "Indigo"). Append after `company`, before mapping tables.
-      - Cashew Import Run.notes (Small Text). Append after
-        `diagnostics_file` inside a new collapsed Section Break
-        "Operator Notes".
-      - Cashew Import Row.validation_severity (Select, options
-        "Error\nWarning\nInfo", default "Error",
-        depends_on="eval:doc.validation_status=='Error'"). Append
-        immediately after `validation_status`.
-      Includes the JSON DocType updates + `bench migrate`. Existing
-      validators continue to set validation_status="Error" and
-      validation_severity defaults to "Error" alongside; future
-      validator classes may emit Warning/Info. Workbench treats
-      Warning rows as queueable; Error still blocks queue_run.
 
 status_history:
   - 2026-05-24 arch-done (bmad-fb-architect) — 8 decisions recorded;
@@ -353,25 +278,16 @@ status_history:
     deferred). c005/c006/c007 renamed in component list; c004 shell
     updated with sidebar shape; c009 endpoint re-scoped to GL-derived
     aggregates.
-  - 2026-05-24 design-handoff-received (claude-design) — high-fidelity
-    React prototype + design tokens + interactions doc + component
-    mapping landed under
-    .fb/features/f010-cashew-frontend-spa/design_handoff_f010_cashew_spa/.
-    Reviewed for coverage; structurally complete; ready for TD when
-    schema additions ship.
-  - 2026-05-24 ui-delta-settings (bmad-fb-ui) — 4th surface added:
-    Settings page (c012). Arch deltas D12/D13/D14 recorded. UI-phase
-    doctype-field-addition flag closed after 3 approved additions (c013):
-    Cashew Settings.accent_color, Cashew Import Run.notes, Cashew Import
-    Row.validation_severity. row_note request withdrawn (Cashew Import
-    Row.note already exists). Sidebar grew a Settings nav item.
 
 next_step: >
-  Two parallel tracks:
-  1. Bench/Dev: build c013 (schema additions) — three JSON edits + bench
-     migrate. Ships ahead of c012 since c012 depends on accent_color.
-  2. TD: convert design_handoff_f010_cashew_spa + .fb/ui/ briefs into
-     per-component specs (c001 -> c013). Settings page brief lives at
-     .fb/ui/pages/settings.md. Route via bmad-fb-orch.
+  Continue UI phase: per-page component breakdown + HTML wireframes for
+  finance-dashboard, imports-list, run-workspace. Sequence:
+  1. finance-dashboard (lowest interaction surface, anchors data shape
+     for c009 update).
+  2. imports-list (depends on dashboard period-selector decisions for
+     consistency).
+  3. run-workspace (largest; needs section-by-section approval —
+     Upload, Preview, RowsWorkbench, CompletedSummary).
+  After UI completes, route via bmad-fb-orch to bmad-fb-td for specs.
 
 blocked_by: []

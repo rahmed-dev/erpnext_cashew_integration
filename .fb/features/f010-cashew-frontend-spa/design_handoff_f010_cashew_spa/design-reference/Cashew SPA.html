@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cashew SPA — Design Canvas</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  #app { width: 100%; height: 100%; }
+  /* Loader shown until React mounts */
+  .preload { display: flex; align-items: center; justify-content: center; height: 100%; color: rgba(60,50,40,0.55); font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="app"><div class="preload">Loading Cashew SPA canvas…</div></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- Plain JS module -->
+<script src="src/data.jsx"></script>
+
+<!-- JSX modules -->
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="src/ui.jsx"></script>
+<script type="text/babel" src="src/Shell.jsx"></script>
+<script type="text/babel" src="src/Dashboard.jsx"></script>
+<script type="text/babel" src="src/ImportsList.jsx"></script>
+<script type="text/babel" src="src/Workspace.jsx"></script>
+<script type="text/babel" src="src/Foundations.jsx"></script>
+<script type="text/babel" src="src/Alternates.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+// ── App composer ──────────────────────────────────────────────────────────
+// Top-level: TweaksPanel for global controls + DesignCanvas with all artboards.
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "#0f766e",
+  "chartStyle": "donut",
+  "density": "compact",
+  "sidebar": "collapsed",
+  "theme": "warm",
+  "roundness": "round",
+  "showRealtimePulse": true
+}/*EDITMODE-END*/;
+
+const ACCENT_PRESETS = ['#4f46e5', '#0f766e', '#c2410c', '#18181b', '#0891b2'];
+
+// roundness presets — drive --cs-radius-* across the entire artboard.
+const ROUNDNESS = {
+  sharp:   { card:  4, btn:  4, input:  4, chip:  4, lg:  6 },
+  regular: { card: 10, btn:  8, input:  8, chip:  8, lg: 14 },
+  round:   { card: 14, btn: 10, input: 10, chip: 999, lg: 20 },
+  extra:   { card: 24, btn: 16, input: 16, chip: 999, lg: 32 },
+};
+
+// Wraps a page in a Shell — gives each artboard the consistent sidebar/chrome.
+// `route` decides which nav item highlights.
+function ArtboardFrame({ children, route = '/', collapsed, t }) {
+  const r = ROUNDNESS[t.roundness] || ROUNDNESS.round;
+  return (
+    <div style={{
+      width: '100%', height: '100%', overflow: 'hidden',
+    }}>
+      <style>{`
+        .cs-root {
+          --cs-accent: ${t.accent} !important;
+          --cs-accent-700: ${darken(t.accent, 0.1)} !important;
+          --cs-accent-50: ${tint(t.accent, 0.92)} !important;
+          --cs-accent-100: ${tint(t.accent, 0.85)} !important;
+          --cs-radius: ${r.card}px !important;
+          --cs-radius-btn: ${r.btn}px !important;
+          --cs-radius-input: ${r.input}px !important;
+          --cs-radius-chip: ${r.chip}px !important;
+          --cs-radius-lg: ${r.lg}px !important;
+        }
+      `}</style>
+      <window.Shell route={route} collapsed={t.sidebar === 'collapsed' || collapsed}>
+        <div className={`cs-root ${t.theme === 'cool' ? 'cs-cool' : ''} ${t.density === 'compact' ? 'cs-compact' : ''}`} style={{ minHeight: '100%' }}>
+          {children}
+        </div>
+      </window.Shell>
+    </div>
+  );
+}
+
+// quick color helpers
+function darken(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, ((n >> 16) & 255) - Math.round(255 * amt));
+  const g = Math.max(0, ((n >>  8) & 255) - Math.round(255 * amt));
+  const b = Math.max(0, ( n        & 255) - Math.round(255 * amt));
+  return `#${((r<<16)|(g<<8)|b).toString(16).padStart(6,'0')}`;
+}
+function tint(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 255) + (255 - ((n >> 16) & 255)) * amt);
+  const g = Math.round(((n >>  8) & 255) + (255 - ((n >>  8) & 255)) * amt);
+  const b = Math.round(( n        & 255) + (255 - ( n        & 255)) * amt);
+  return `#${((r<<16)|(g<<8)|b).toString(16).padStart(6,'0')}`;
+}
+
+function App() {
+  const [t, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
+  const {
+    DesignCanvas, DCSection, DCArtboard, DCPostIt,
+    FinanceDashboard, ImportsList, RunWorkspace, Foundations,
+    DashboardAlt, WorkbenchSplitAlt,
+  } = window;
+
+  const W = 1280, H = 800;
+  const Wmobile = 380, Hmobile = 760;
+
+  return (
+    <>
+      <DesignCanvas>
+        <DCSection id="foundations" title="Foundations" subtitle="Color, type, status pills, components — the visual system at a glance">
+          <DCArtboard id="found"    label="Design System" width={720} height={H}>
+            <Foundations/>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="dashboard" title="Finance Dashboard" subtitle="SPA landing — QuickBooks-tile layout, GL-derived, period selector">
+          <DCArtboard id="dash-loaded" label="01 · Loaded" width={W} height={H}>
+            <ArtboardFrame route="/" t={t}><FinanceDashboard chartStyle={t.chartStyle}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="dash-loading" label="02 · Loading" width={W} height={H}>
+            <ArtboardFrame route="/" t={t}><FinanceDashboard state="loading" chartStyle={t.chartStyle}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="dash-empty" label="03 · Empty / first-run" width={W} height={H}>
+            <ArtboardFrame route="/" t={t}><FinanceDashboard state="empty"/></ArtboardFrame>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="imports-list" title="Imports List" subtitle="Searchable + filterable table of every Cashew Import Run">
+          <DCArtboard id="list-loaded" label="01 · Loaded" width={W} height={H}>
+            <ArtboardFrame route="/runs" t={t}><ImportsList/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="list-loading" label="02 · Loading" width={W} height={H}>
+            <ArtboardFrame route="/runs" t={t}><ImportsList state="loading"/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="list-empty" label="03 · Empty" width={W} height={H}>
+            <ArtboardFrame route="/runs" t={t}><ImportsList state="empty"/></ArtboardFrame>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="workspace" title="Run Workspace" subtitle="State-driven sections — same URL, content swaps with run.status">
+          <DCArtboard id="ws-upload" label="01 · Draft / Upload" width={W} height={H}>
+            <ArtboardFrame route="/runs/new" t={t}><RunWorkspace initialStatus="Draft" density={t.density}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="ws-preview" label="02 · Parsed / Preview" width={W} height={H}>
+            <ArtboardFrame route="/runs/CSH-IMP-2026-000016" t={t}><RunWorkspace initialStatus="Parsed" density={t.density}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="ws-workbench-errors" label="03 · Validated · errors" width={W} height={H + 60}>
+            <ArtboardFrame route="/runs/CSH-IMP-2026-000016" t={t}><RunWorkspace initialStatus="Validated" density={t.density}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="ws-workbench-processing" label="04 · Processing · live" width={W} height={H + 60}>
+            <ArtboardFrame route="/runs/CSH-IMP-2026-000016" t={t}><RunWorkspace initialStatus="Processing" density={t.density}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="ws-completed" label="05 · Completed" width={W} height={H + 100}>
+            <ArtboardFrame route="/runs/CSH-IMP-2026-000016" t={t}><RunWorkspace initialStatus="Completed" density={t.density}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="ws-reverted" label="06 · Reverted" width={W} height={H + 100}>
+            <ArtboardFrame route="/runs/CSH-IMP-2026-000016" t={t}><RunWorkspace initialStatus="Reverted" density={t.density}/></ArtboardFrame>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="mobile" title="Mobile" subtitle="Narrow viewport variants — sidebar collapses, tables become cards">
+          <DCArtboard id="m-dashboard" label="Dashboard" width={Wmobile} height={Hmobile}>
+            <ArtboardFrame route="/" t={t} collapsed><FinanceDashboard chartStyle={t.chartStyle}/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="m-imports" label="Imports" width={Wmobile} height={Hmobile}>
+            <ArtboardFrame route="/runs" t={t} collapsed><ImportsList/></ArtboardFrame>
+          </DCArtboard>
+          <DCArtboard id="m-workspace" label="Workspace · Upload" width={Wmobile} height={Hmobile}>
+            <ArtboardFrame route="/runs/new" t={t} collapsed><RunWorkspace initialStatus="Draft"/></ArtboardFrame>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="alternates" title="Alternate layouts" subtitle="Opinionated proposals beyond the spec — for discussion">
+          <DCArtboard id="alt-dashboard" label="Alt · Single-bar dashboard" width={W} height={H - 100}>
+            <ArtboardFrame route="/" t={t}><DashboardAlt/></ArtboardFrame>
+            <DCPostIt>Denser Linear-style stat bar.<br/>Trades the donut for a ledger-style category table — better for managers who want exact numbers fast.</DCPostIt>
+          </DCArtboard>
+          <DCArtboard id="alt-workbench" label="Alt · Split workbench" width={W} height={H}>
+            <ArtboardFrame route="/runs/CSH-IMP-2026-000016" t={t}><WorkbenchSplitAlt/></ArtboardFrame>
+            <DCPostIt>Row detail drawer is always present.<br/>Faster fix-row UX than modals — type, tab, save, next row. Trade-off: less horizontal room for columns.</DCPostIt>
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <window.TweaksPanel title="Cashew SPA · Tweaks">
+        <window.TweakSection label="Brand"/>
+        <window.TweakColor label="Accent" value={t.accent} options={ACCENT_PRESETS} onChange={v => setTweak('accent', v)}/>
+
+        <window.TweakSection label="Dashboard"/>
+        <window.TweakRadio label="Chart style" value={t.chartStyle} options={['donut','bar']} onChange={v => setTweak('chartStyle', v)}/>
+
+        <window.TweakSection label="Workbench"/>
+        <window.TweakRadio label="Density" value={t.density} options={['compact','comfortable']} onChange={v => setTweak('density', v)}/>
+
+        <window.TweakSection label="Shell"/>
+        <window.TweakRadio label="Sidebar" value={t.sidebar} options={['expanded','collapsed']} onChange={v => setTweak('sidebar', v)}/>
+        <window.TweakRadio label="Theme" value={t.theme} options={['warm','cool']} onChange={v => setTweak('theme', v)}/>
+        <window.TweakSelect label="Roundness" value={t.roundness} options={['sharp','regular','round','extra']} onChange={v => setTweak('roundness', v)}/>
+
+        <window.TweakSection label="Surprise"/>
+        <window.TweakToggle label="Show realtime pulse" value={t.showRealtimePulse} onChange={v => setTweak('showRealtimePulse', v)}/>
+      </window.TweaksPanel>
+    </>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('app'));
+root.render(<App/>);
+</script>
+</body>
+</html>
