@@ -1,7 +1,7 @@
 id: f010
 name: Cashew Frontend SPA (Dashboard + Imports + Workspace + Settings)
-status: in-progress
-stage: ui-in-progress
+status: done
+stage: done
 priority: high
 owner: bmad-fb-ui
 
@@ -69,14 +69,15 @@ architecture:
        c002). "Back to Desk" link -> /app. All surfaces responsive
        (mobile + tablet usable v1).
     - D3 Frappe session cookie + CSRF via Jinja boot data (no API keys).
-       Role gate: System Manager OR Accounts Manager.
+       Role gate — System Manager OR Accounts Manager.
     - D4 bench build hook via Doppio build.json; commit www/cashew.html,
        gitignore public/frontend/
-    - D5 Hybrid API discipline (binding):
-       reads via frappe.client.*; Link selectors via frappe-ui Autocomplete
-       with reference_doctype + reference_fieldname; writes reuse existing
-       cashew_integration/api.py whitelisted methods with explicit
-       frappe.has_permission; aggregates via new dashboard_summary endpoint
+    - >
+        D5 Hybrid API discipline (binding):
+        reads via frappe.client.*; Link selectors via frappe-ui Autocomplete
+        with reference_doctype + reference_fieldname; writes reuse existing
+        cashew_integration/api.py whitelisted methods with explicit
+        frappe.has_permission; aggregates via new dashboard_summary endpoint
     - D6 State management library choice deferred to TD; session-only view
        state (no localStorage persistence) is a binding constraint
     - D7 SPA Run Detail (c006) owns row-level UX natively; f006 Row
@@ -91,25 +92,37 @@ architecture:
     - D11 Run workspace ships full row-level UX today inside RowsWorkbench
        section, with declarative action/column registries for future
        row-feature extension. Closes D7.
-    - D12 Settings page added as 4th SPA surface at /settings. Two
-       sections: Appearance (accent color, 5 presets) + Default Company
-       (existing Cashew Settings.company). Mapping CRUD stays on Desk
-       (deep-link). No new global per-run defaults. New component c012.
-    - D13 Three approved DocType schema additions (component c013):
-       (a) Cashew Settings.accent_color (Select, 5 presets, default Indigo);
-       (b) Cashew Import Run.notes (Small Text);
-       (c) Cashew Import Row.validation_severity (Select Error/Warning/Info).
-       Withdrew Cashew Import Row.row_note (redundant — `note` field
-       already exists on Cashew Import Row).
+    - >
+        D12 Settings page added as 4th SPA surface at /settings. Two
+        sections: Appearance (accent color, 5 presets) + Default Company
+        (existing Cashew Settings.company). Mapping CRUD stays on Desk
+        (deep-link). No new global per-run defaults. New component c012.
+    - >
+        D13 Three approved DocType schema additions (component c013):
+        (a) Cashew Settings.accent_color (Select, 5 presets, default Indigo);
+        (b) Cashew Import Run.notes (Small Text);
+        (c) Cashew Import Row.validation_severity (Select Error/Warning/Info).
+        Withdrew Cashew Import Row.row_note (redundant — `note` field
+        already exists on Cashew Import Row).
+    - >
+        D13/D14 Amendment 1 (2026-05-24, TD phase, in arch/decisions-b.md):
+        accent_color Select grows to 6 options (adds "Custom"); new
+        Cashew Settings.accent_color_custom Data field holds a 6-digit
+        hex when Custom is selected (server-side regex validator).
+        c013 now ships 4 field additions (not 3) plus a controller hook.
+        SPA shell derives -700/-100/-50 shades for Custom hex via HSL
+        math (c004 spec finalizes).
     - D14 Accent color stored on Cashew Settings (Single doctype), app-wide
        (not per-user). Boot dict carries it; shell maps preset -> 4 CSS
        custom properties (--cs-accent, -700, -100, -50). Realtime
        Cashew Settings doc_update propagates theme to all open SPA tabs.
-    - UI-phase flag (closed, 2026-05-24): doctype field-addition channel
-       closed after D13 captured 3 approved additions; future additions
-       follow the same approval rule.
-    - UI-phase flag (closed): per-page route gating out of scope; D5.c
-       handled at shell level only.
+    - >
+        UI-phase flag (closed, 2026-05-24): doctype field-addition channel
+        closed after D13 captured 3 approved additions; future additions
+        follow the same approval rule.
+    - >
+        UI-phase flag (closed): per-page route gating out of scope; D5.c
+        handled at shell level only.
 
 prior_art_in_app:
   - cashew_row_explorer.bundle.js — Vue 3 inside a Frappe Page using
@@ -127,68 +140,144 @@ components:
     name: spa-scaffold
     type: build-tooling
     depends_on: []
-    spec_file: null
+    spec_file: specs/c001-spec.md
     desc: >
-      Doppio CLI bootstrap output: frontend/ folder with package.json
-      (vue 3, vue-router, pinia or composables per TD, frappe-ui,
-      socket.io-client), vite.config.js (frappeProxy:true,
-      jinjaBootData:true, lucideIcons:true), src/ skeleton, gitignore
-      entries for node_modules, dist, public/frontend.
+      `bench add-frontend --app cashew_integration` (Doppio) with the
+      answers captured in c001-spec.md (Vue, frontend dir name "frontend",
+      JS not TS, frappe-ui yes, HTML5 history, app name "cashew",
+      Tailwind via frappe-ui preset, lucideIcons true, build hook on).
+      TD overlay applied after Doppio runs:
+      - `yarn add socket.io-client@^4.7` (D8 needs it).
+      - `yarn add lucide-vue-next` (DESIGN_TOKENS uses lucide).
+      - >
+          D6 binding: NO pinia, NO *-persistedstate, NO localStorage /
+          sessionStorage anywhere in src/.
+      - >
+          cashew_integration/.gitignore (app root): append
+          `frontend/node_modules`, `frontend/dist`, `public/frontend/`.
+      - src/index.css :root block with default --cs-accent /
+        -700/-100/-50 (Indigo) for sane first paint pre-boot.
+      - >
+          vite.config.js: confirm `lucideIcons: true` on frappeui plugin.
+      State pattern (D6 resolved): frappe-ui `createResource` for data,
+      module-scope composables for shared session-only state. No
+      persistence. Does NOT include www/cashew.* (c002), build-hook
+      verification (c003), router routes / shell (c004), pages.
   - id: c002
     name: spa-host-route
     type: route-and-jinja-entry
     depends_on: []
-    spec_file: null
+    spec_file: specs/c002-spec.md
     desc: >
-      cashew_integration/www/cashew.html (built shell, committed) +
-      cashew_integration/www/cashew.py (no_cache=1, boot dict injection:
-      csrf_token, session_user, sysdefaults, default_company,
-      default_currency, default_period_*).
-      Permission gate (per D3.a): check_app_permission() returns True if
-      session user holds Role "System Manager" OR "Accounts Manager".
-      Otherwise raise PermissionError -> Frappe redirects to /login.
-      hooks.py website_route_rules catch-all /cashew/<path:app_path> ->
-      cashew. hooks.py app_icon_url = "/assets/cashew_integration/images/
-      cashew-app-icon.svg", app_icon_route = "/cashew", app_icon_title =
-      "Cashew" for the Apps screen tile. SVG icon asset authored as part
-      of this component (committed at public/images/cashew-app-icon.svg).
+      Four artifacts land the SPA at /cashew/*:
+      - >
+          www/cashew.py: get_context() perm gate + _build_boot() boot dict
+          builder. no_cache=1. Boot dict shape (S1+S2+c013 fields):
+          csrf_token, session_user (+ full_name + image), sysdefaults
+          (default_company, default_currency=PKR fallback),
+          cashew_settings (default_company, accent_color,
+          accent_color_custom), default_period_start (= server first day
+          of current month), default_period_end (= today),
+          can_write_settings (sole boot-time perm flag — others checked
+          per-action server-side per D5.3), realtime_token (D8 socket
+          auth), app_version.
+      - >
+          www/cashew.html: vite build output (Doppio template), committed
+          per D4. Must include {{ boot | tojson }} -> window.boot before
+          bundle script, mount #app, hashed asset URLs.
+      - >
+          hooks.py: website_route_rules catch-all
+          /cashew/<path:app_path> -> cashew + app_icon_url /
+          app_icon_route / app_icon_title for the /app tile.
+      - >
+          public/images/cashew-app-icon.svg: lucide `landmark` glyph,
+          currentColor stroke, 24x24 viewBox. Designer-swap-friendly.
+      Permission flow (D3 refined): Guest -> 302
+      /login?redirect-to=/cashew; logged-in w/o role gate ->
+      frappe.PermissionError -> Frappe stock 403 page; role-bearer
+      (System Manager OR Accounts Manager) -> 200 SPA shell.
   - id: c003
     name: build-hook
     type: build-tooling
     depends_on:
       - c001
       - c002
-    spec_file: null
+    spec_file: specs/c003-spec.md
     desc: >
-      Doppio build.json trigger so 'bench build --app cashew_integration'
-      runs 'yarn install && yarn build' inside frontend/, outputs to
-      cashew_integration/public/frontend/, copies index.html to
-      cashew_integration/www/cashew.html. Confirm dev loop:
-      'bench start' + 'cd frontend && yarn dev' with HMR at :8080.
+      Verify Doppio's build hook + document the dev loop. Most work is
+      Doppio's; TD enforces the D4 contract.
+      - >
+          `bench build --app cashew_integration` runs
+          `yarn install --check-files && yarn build` (Shape A:
+          cashew_integration/build.json, OR Shape B: hooks.py
+          build_command — Doppio's installed version picks).
+      - vite outputs to public/frontend/ (gitignored); built index.html
+        is copied to www/cashew.html (committed per D4) — preferably via
+        frappe-ui vite plugin's emitIndexHtmlTo option; fallback is a
+        node -e fs.copyFileSync npm-script step (portable across OSes).
+      - No source maps in production (build.sourcemap=false, set in c001).
+      - >
+          Dev loop documented in NEW file frontend/README.md: two-terminal
+          flow (bench start + yarn dev), HMR, common pitfalls. Cross-link
+          added to cashew_integration/CLAUDE.md (one line under SPA hosting
+          section).
+      Pure tooling + docs; no new Python or JS source.
   - id: c004
     name: spa-router-shell
     type: ui-shell
     depends_on:
       - c001
-    spec_file: null
+    spec_file: specs/c004-spec.md
     desc: >
-      App.vue, router.js (createWebHistory; routes per D9/D10:
-      `/` -> finance dashboard (landing), `/runs` -> imports list,
-      `/runs/new` -> run workspace (fresh state), `/runs/:run_name` ->
-      run workspace (state-driven)). Shared responsive layout shell:
-      LEFT SIDEBAR with app-switcher dropdown at top (Cashew / "Back to
-      Desk" -> /app / placeholder for other apps) and nav items
-      (Dashboard, Imports). Mobile-collapsible sidebar. Session store
-      reads window.boot. All child pages (c005, c006, c007) inherit
-      responsive primitives from this shell per D2.c.
-      Shell-level global error-toast boundary handles D5.c (graceful
-      403 / "Permission denied" surfaces without crashing the route).
+      Responsive SPA shell + 5 routes (HTML5 history).
+      - >
+          Routes: / finance-dashboard (c007), /runs imports-list (c005),
+          /runs/new + /runs/:run_name run-workspace (c006), /settings
+          settings (c012), catch-all -> /. scrollBehavior: preserve on
+          back/forward; top on push.
+      - >
+          Layout: DESKTOP (>= md) left sidebar (AppSwitcher top, NavItems,
+          UserChip + RealtimeStatusIndicator bottom). MOBILE (< md) slim
+          top bar (page title + UserChip dropdown w/ Back-to-Desk +
+          Profile + Theme + Logout + Realtime dot) + fixed bottom nav
+          bar (Dashboard / Imports / Settings, icon+label, active via
+          route prefix). Bottom-nav padding accounted for via safe-area.
+      - >
+          ThemeController in src/theme.js: locked Tailwind 3.x preset
+          table (Indigo / Teal / Burnt Orange / Monochrome / Cyan hex
+          quads) + deriveShades(hex) HSL math (-700 L-10%, -100 S<=30 L=92,
+          -50 S<=20 L=96) for Custom accent path. Applied to <html> CSS
+          vars (--cs-accent, -700, -100, -50). Boot-time init in main.js
+          BEFORE Vue mount (avoids flash of wrong color). c008 hook
+          applyThemeFromDoc on Cashew Settings doc_update.
+      - >
+          Boot adapter src/boot.js: useSession / useSysDefaults /
+          useCashewSettings / useDefaultPeriod / hasWriteSettings /
+          useRealtimeToken / useAppVersion. Read-only at page load.
+      - >
+          State composables src/state/: useDashboardPeriod, useCurrentRun
+          (route-derived), useTheme, useIsMobile (eager-init resize
+          listener), useRealtimeStatus (4-state: connected/reconnecting/
+          disconnected/unknown — stub here, c008 drives).
+      - >
+          Error handling (D5.c): Vue onErrorCaptured boundary in App.vue
+          for component errors; src/errors.js installErrorInterceptors
+          wraps frappe-ui HTTP layer (axios path preferred, fetch
+          fallback) for 401 (toast + redirect to login) / 403 (toast) /
+          5xx (toast) / network (toast). Both funnel to frappe-ui Toasts.
+      - >
+          Shell components in src/components/Shell/: Sidebar.vue (desktop),
+          MobileTopBar.vue, MobileBottomNav.vue, AppSwitcher.vue,
+          NavItems.vue, UserChip.vue, RealtimeStatusIndicator.vue.
+      - Page stubs in src/pages/ for FinanceDashboard / ImportsList /
+        RunWorkspace / Settings (downstream specs fill).
+      - No Pinia, no localStorage, no sessionStorage (D6 binding).
   - id: c005
     name: imports-list-page
     type: ui-page
     depends_on:
       - c004
-    spec_file: null
+    spec_file: specs/c005-spec.md
     desc: >
       List view backed by frappe.client.get_list("Cashew Import Run").
       Filters by status, date range, company. Sort, pagination. "+ New
@@ -200,23 +289,29 @@ components:
     type: ui-page
     depends_on:
       - c004
-    spec_file: null
+    spec_file: specs/c006-spec.md
+    spec_files_extra:
+      - specs/c006-spec-b.md
     desc: >
       Unified create + work + view workspace for a single Cashew Import
       Run (D10). Single Vue page component; routes `/runs/new` and
       `/runs/:run_name` both resolve here. State-driven sections render
       based on run.status:
-      - UploadSection (Draft): CSV file picker, parse trigger.
-      - PreviewSection (Parsed): row preview + parse stats, validate.
-      - RowsWorkbench (Validating/Validated): full row-level UX (D11) —
-        table with filters (status, txn_type, category_type, category,
-        raw_account, posted state), column presets, inline party edit,
-        validation-fix modal, bulk select + bulk party-set, search,
-        status pills. Frappe-ui table/form/modal primitives.
-        Declarative action + column registries for future row-feature
-        extension (D11).
-      - CompletedSummary (Queued/Posted/Reverted): read-mostly results
-        view + revert action.
+      - >
+          UploadSection (Draft): CSV file picker, parse trigger.
+      - >
+          PreviewSection (Parsed): row preview + parse stats, validate.
+      - >
+          RowsWorkbench (Validating/Validated): full row-level UX (D11) —
+          table with filters (status, txn_type, category_type, category,
+          raw_account, posted state), column presets, inline party edit,
+          validation-fix modal, bulk select + bulk party-set, search,
+          status pills. Frappe-ui table/form/modal primitives.
+          Declarative action + column registries for future row-feature
+          extension (D11).
+      - >
+          CompletedSummary (Queued/Posted/Reverted): read-mostly results
+          view + revert action.
       Reads via frappe.client.get_doc; writes reuse existing
       cashew_integration/api.py whitelisted methods (parse_and_preview,
       validate_import, queue_run, revert_run, set_row_party,
@@ -230,7 +325,7 @@ components:
     depends_on:
       - c004
       - c009
-    spec_file: null
+    spec_file: specs/c007-spec.md
     desc: >
       Finance dashboard (D9) — SPA landing at `/`. Calls
       cashew_integration.api.dashboard_summary (c009) for GL-derived
@@ -245,7 +340,7 @@ components:
     type: ui-infra
     depends_on:
       - c004
-    spec_file: null
+    spec_file: specs/c008-spec.md
     desc: >
       Socket.IO connection bootstrap. Subscribes to doc_update events
       for Cashew Import Run (list-level and currently-viewed doc).
@@ -255,7 +350,7 @@ components:
     name: dashboard-summary-endpoint
     type: api
     depends_on: []
-    spec_file: null
+    spec_file: specs/c009-spec.md
     desc: >
       New whitelisted method cashew_integration.api.dashboard_summary
       (period_start?, period_end?, company?). Scope updated per D9 —
@@ -277,7 +372,7 @@ components:
     name: api-permission-audit
     type: refactor
     depends_on: []
-    spec_file: null
+    spec_file: specs/c010-spec.md
     desc: >
       Audit every whitelisted write method in cashew_integration/api.py
       added by f001 / f004 / f006. Confirm each calls
@@ -287,7 +382,7 @@ components:
     name: realtime-emission-audit
     type: refactor
     depends_on: []
-    spec_file: null
+    spec_file: specs/c011-spec.md
     desc: >
       Audit cashew worker code paths that mutate Cashew Import Run state.
       Confirm each goes through frappe.db.set_value() / doc.save() (which
@@ -300,16 +395,18 @@ components:
     depends_on:
       - c004
       - c013
-    spec_file: null
+    spec_file: specs/c012-spec.md
     desc: >
       Settings page (D12) at SPA route `/settings`. Third sidebar nav
       item (lucide `settings` icon). Two sections:
-      - Appearance: accent color picker, 5 presets (Indigo / Teal /
-        Burnt Orange / Monochrome / Cyan). Live preview applies tokens
-        on selection; dirty-state save bar persists on click. Writes
-        Cashew Settings.accent_color via frappe.client.set_value (D5.1).
-      - Default Company: frappe-ui <Autocomplete reference_doctype="Company">
-        bound to Cashew Settings.company. Writes via the same path.
+      - >
+          Appearance: accent color picker, 5 presets (Indigo / Teal /
+          Burnt Orange / Monochrome / Cyan). Live preview applies tokens
+          on selection; dirty-state save bar persists on click. Writes
+          Cashew Settings.accent_color via frappe.client.set_value (D5.1).
+      - >
+          Default Company: frappe-ui <Autocomplete reference_doctype="Company">
+          bound to Cashew Settings.company. Writes via the same path.
       Plus a "Manage on Desk" link group for the two mapping doctypes
       (Cashew Category Mapping, Cashew Account Mapping) — same-tab
       anchor to /app/{doctype-route}. No mapping CRUD in SPA.
@@ -323,55 +420,260 @@ components:
     name: schema-additions
     type: doctype-change
     depends_on: []
-    spec_file: null
+    spec_file: specs/c013-spec.md
     desc: >
-      Three additive DocType changes approved 2026-05-24 (D13). No data
-      backfill; all fields optional / default-blank for existing records.
-      - Cashew Settings.accent_color (Select, options
-        "Indigo\nTeal\nBurnt Orange\nMonochrome\nCyan", default
-        "Indigo"). Append after `company`, before mapping tables.
-      - Cashew Import Run.notes (Small Text). Append after
+      Four additive DocType field changes approved 2026-05-24 (D13 +
+      D13/D14 Amendment 1 in arch/decisions-b.md). No data backfill;
+      all fields optional / default-blank for existing records.
+      - >
+          Cashew Settings.accent_color (Select, options
+          "Indigo\nTeal\nBurnt Orange\nMonochrome\nCyan\nCustom",
+          default "Indigo"). Append after `company`, before mapping
+          tables. Amendment 1: added "Custom" choice.
+      - Cashew Settings.accent_color_custom (Data,
+        depends_on="eval:doc.accent_color=='Custom'",
+        mandatory_depends_on=same, server-side regex validator
+        ^#[0-9a-fA-F]{6}$ in Cashew Settings.validate). Append
+        immediately after `accent_color`. NEW in Amendment 1.
+      - Cashew Import Run.notes (Long Text). Append after
         `diagnostics_file` inside a new collapsed Section Break
-        "Operator Notes".
+        "Operator Notes" (collapsible_depends_on=eval:!doc.notes).
       - Cashew Import Row.validation_severity (Select, options
-        "Error\nWarning\nInfo", default "Error",
+        "Error\nWarning\nInfo", default "Error", read_only=1,
         depends_on="eval:doc.validation_status=='Error'"). Append
-        immediately after `validation_status`.
-      Includes the JSON DocType updates + `bench migrate`. Existing
-      validators continue to set validation_status="Error" and
-      validation_severity defaults to "Error" alongside; future
-      validator classes may emit Warning/Info. Workbench treats
-      Warning rows as queueable; Error still blocks queue_run.
+        immediately after `validation_status`. Server-set only.
+      Includes the JSON DocType updates, the validator hook, and
+      `bench migrate`. Existing validators continue to set
+      validation_status="Error" and validation_severity defaults to
+      "Error" alongside; future validator classes may emit
+      Warning/Info. Workbench treats Warning rows as queueable;
+      Error still blocks queue_run.
 
 status_history:
   - 2026-05-24 arch-done (bmad-fb-architect) — 8 decisions recorded;
     f006 dep dropped; row-explorer relationship deferred to UI phase
-  - 2026-05-24 ui-in-progress (bmad-fb-ui) — page inventory locked
-    (3 pages: finance-dashboard, imports-list, run-workspace). Arch
-    deltas D9/D10/D11 recorded. Two UI-phase scope flags raised: open
-    (doctype field-addition channel), closed (per-page perm UX
-    deferred). c005/c006/c007 renamed in component list; c004 shell
-    updated with sidebar shape; c009 endpoint re-scoped to GL-derived
-    aggregates.
+  - >
+      2026-05-24 ui-in-progress (bmad-fb-ui) — page inventory locked
+      (3 pages: finance-dashboard, imports-list, run-workspace). Arch
+      deltas D9/D10/D11 recorded. Two UI-phase scope flags raised: open
+      (doctype field-addition channel), closed (per-page perm UX
+      deferred). c005/c006/c007 renamed in component list; c004 shell
+      updated with sidebar shape; c009 endpoint re-scoped to GL-derived
+      aggregates.
   - 2026-05-24 design-handoff-received (claude-design) — high-fidelity
     React prototype + design tokens + interactions doc + component
     mapping landed under
     .fb/features/f010-cashew-frontend-spa/design_handoff_f010_cashew_spa/.
     Reviewed for coverage; structurally complete; ready for TD when
     schema additions ship.
-  - 2026-05-24 ui-delta-settings (bmad-fb-ui) — 4th surface added:
-    Settings page (c012). Arch deltas D12/D13/D14 recorded. UI-phase
-    doctype-field-addition flag closed after 3 approved additions (c013):
-    Cashew Settings.accent_color, Cashew Import Run.notes, Cashew Import
-    Row.validation_severity. row_note request withdrawn (Cashew Import
-    Row.note already exists). Sidebar grew a Settings nav item.
+  - >
+      2026-05-24 ui-delta-settings (bmad-fb-ui) — 4th surface added:
+      Settings page (c012). Arch deltas D12/D13/D14 recorded. UI-phase
+      doctype-field-addition flag closed after 3 approved additions (c013):
+      Cashew Settings.accent_color, Cashew Import Run.notes, Cashew Import
+      Row.validation_severity. row_note request withdrawn (Cashew Import
+      Row.note already exists). Sidebar grew a Settings nav item.
+  - >
+      2026-05-24 td-c013-spec (bmad-fb-td) — c013 schema-additions spec
+      written to specs/c013-spec.md. Architecture amendment recorded in
+      arch/decisions-b.md (Amendment 1 to D13/D14): added "Custom"
+      accent_color choice + new `Cashew Settings.accent_color_custom`
+      Data field with server-side hex regex validator. c013 now ships
+      FOUR field additions across three DocTypes plus one validator
+      hook on Cashew Settings.validate. accent_color Select options
+      grew from 5 to 6 (Indigo/Teal/Burnt Orange/Monochrome/Cyan/Custom).
+      Shade derivation for Custom hex deferred to c004 shell spec.
+      Custom hex UI input deferred to c012 settings-page spec. Notes
+      fieldtype corrected to Long Text. validation_severity marked
+      read_only=1.
+  - >
+      2026-05-24 td-c001-spec (bmad-fb-td) — c001 spa-scaffold spec
+      written to specs/c001-spec.md. Captures the Doppio
+      `bench add-frontend` invocation + answer set, the TD overlay
+      applied after Doppio (extra deps socket.io-client + lucide-vue-next,
+      no-Pinia binding, app-root gitignore additions, src/index.css CSS
+      var defaults, vite.config.js lucideIcons confirmation), and
+      D6 RESOLVED: state management is frappe-ui `createResource` for
+      data + module-scope composables for shared session-only state.
+      Pinia and *-persistedstate explicitly forbidden in package.json;
+      no localStorage / sessionStorage writes anywhere in src/.
+      TS/JS choice = JavaScript (matches frappe-ui examples + CRM).
+  - >
+      2026-05-24 td-c002-spec (bmad-fb-td) — c002 spa-host-route spec
+      written to specs/c002-spec.md. Resolves four decisions: S1 boot
+      dict emits server-side default_period_start (first of current
+      month) / default_period_end (today) in site tz; S2 boot dict
+      carries only `can_write_settings` perm flag, all other actions
+      enforce server-side per call (D5.3); S3 Apps-screen icon is a
+      lucide `landmark` glyph SVG committed at
+      public/images/cashew-app-icon.svg (designer can swap by filename);
+      S4 implementation refinement of D3 — Guest gets 302
+      /login?redirect-to=/cashew, logged-in user without role gate gets
+      Frappe's stock 403 page (PermissionError with i18n message).
+      Boot dict spec includes csrf_token, session_user trio, sysdefaults,
+      cashew_settings (default_company, accent_color, accent_color_custom),
+      default_period_*, can_write_settings, realtime_token (D8),
+      app_version. hooks.py additions captured (website_route_rules
+      catch-all + app_icon_* trio).
+  - >
+      2026-05-24 td-c003-spec (bmad-fb-td) — c003 build-hook spec written
+      to specs/c003-spec.md. Verifies Doppio's build hook (Shape A
+      build.json OR Shape B hooks.py build_command — both fine). Dev loop
+      docs go to NEW frontend/README.md (S1=A); `yarn install
+      --check-files` runs every `bench build` (S2=A, idempotent). D4
+      contract: public/frontend/ gitignored, www/cashew.html committed,
+      emitIndexHtmlTo via frappe-ui vite plugin (preferred) or portable
+      node -e copyFileSync npm-script fallback. No source maps in prod.
+      Pure tooling + docs spec; no new Python or JS source. Cross-link
+      line added to cashew_integration/CLAUDE.md under existing SPA
+      hosting section.
+  - >
+      2026-05-24 td-c005-c006-c007-c008-c009-c010-c011-c012 (bmad-fb-td) —
+      speed pass to close out remaining 8 TD specs in one sitting after c004
+      compaction. All component spec_file refs now set; feature dir is
+      spec-complete. Spec inventory:
+      - specs/c005-spec.md imports-list-page (filters / table / pagination
+      / realtime list patches / mobile card list)
+      - specs/c009-spec.md dashboard-summary-endpoint (GL-derived; P&L by
+      category + balance tiles + recent_runs; perm gates on GL Entry /
+      Account / Company; top-5 + "(Other)" rollup; prior-period balance
+      for delta chip)
+      - specs/c007-spec.md finance-dashboard-page (single dashboard_summary
+      call; BalanceTileGrid + IncomeExpenseChart + CategoryBreakdownCard
+      + RecentImportsStrip + DashboardEmptyState; 2s realtime debounce;
+      chart-library = frappe-ui DonutChart first, chart.js fallback)
+      - specs/c006-spec.md + c006-spec-b.md run-workspace-page (split into
+      2 shards; main = page root + RunHeader RUN_ACTIONS registry +
+      StateStepper + UploadSection + PreviewSection + CompletedSummary;
+      b = RowsWorkbench full D11 surface — column / filter / bulk-action
+      registries, RowsTable CellRenderer switch, InlinePartyEdit,
+      ValidationFixModal, BulkPartyModal, SelectionFooter, InlineRowDrawer,
+      mobile card list w/ long-press select)
+      - specs/c008-spec.md realtime-client (single src/realtime.js module;
+      subscribeList / subscribeDoc / subscribeSettings; 4-state RT
+      machine; 10s permanent-loss timer → 30s get_run_progress polling;
+      Cashew Settings doc_update → applyThemeFromDoc propagation, D14)
+      - specs/c012-spec.md settings-page (Appearance section w/ 6 chips
+      incl. Custom + CustomHexInput per Amendment 1; Defaults section
+      w/ Company Autocomplete; Mappings section deep-links; SaveBar
+      dirty-state; ReadOnlyBanner when !can_write_settings; live
+      preview reverts on Discard / navigate-away)
+      - >
+      specs/c010-spec.md api-permission-audit (audit table; 2 fixes:
+      get_run_progress ptype=read; setup_from_csv add create gate +
+      Company read gate; Cashew Settings write restricted to System
+      Manager so Accounts Manager → ReadOnly in c012)
+      - specs/c011-spec.md realtime-emission-audit (synthetic parent
+      doc_update emission carrying rows[]; _emit_row_update helper +
+      5 worker call sites + 3 api.py emission points; api.py L206/L300
+      run.db_set notify=True belt-and-braces; no SQL UPDATE in tree)
+      Two architecture-level confirmations baked into specs (not new D
+      entries): (i) get_doc.import_rows is the default row fetch path for
+      c006 (switch to row_explorer_load only at scale); (ii) Cashew
+      Import Row realtime is delivered as a `rows: [...]` array on the
+      parent Cashew Import Run doc_update event — c008 normalizes this
+      into `{ doc, rows }` for consumers; c011 emits this shape from
+      worker + api.py write sites.
+  - >
+      2026-05-24 dev-quick-build (bmad-fb-quick) — full f010 quick-built
+      end-to-end in one session via bmad-fb-quick caveman mode, batched
+      with checkpoints (B1 schema+audits+scaffold+host+build-hook+
+      shell; B2 shared+imports-list; B3 dashboard+workspace+settings+
+      realtime endpoint+realtime client). All 13 components shipped;
+      vite build green (2.40s, RunWorkspace bundle 64kB, total ~440kB
+      main+chunks).
+      DEVIATIONS from arch / TD specs (user-approved during build):
+      (a) SPA URL base: spec D2 / c002 called for `/cashew/<path:app_path>`
+      catch-all; actual implementation uses bench `add-spa` (Doppio)
+      default `/frontend/<path:app_path>` route. User explicit during
+      Dev: "no, we are fine with /frontend. /cashew is for routing".
+      Vue Router base = `/frontend`. Apps-screen tile points at
+      `/frontend`. CLAUDE.md SPA hosting section updated to reflect.
+      (b) frappe-ui v0.1.x exported API differs from spec assumptions:
+      shipped uses `resourcesPlugin` + `frappeRequest`+`setConfig`
+      (spec said `FrappeUI` plugin name); toast API uses
+      `toast.error/warning/success/info(msg, opts)` (spec said
+      `createToast` — not exported). Both adjustments verified
+      against node_modules/frappe-ui/src/index.ts. No behavioral
+      change; just import names.
+      (c) Chart library (TD-1): shipped a small hand-rolled SVG donut
+      in IncomeExpenseChart.vue rather than wiring frappe-ui's
+      DonutChart wrapper. Decision: simpler bundle, no extra config
+      surface, easy to swap later if richer charts needed.
+      (d) c006 RowsWorkbench: ships single dynamic preset
+      (Validation-focused / Posting-focused / Compact / All) chosen
+      at mount via `pickInitialPreset`; full virtualization deferred
+      (today's runs are hundreds of rows, not thousands — fine).
+      Naming-conflict warning emitted by unplugin-vue-components for
+      RowKebabMenu duplicated between imports-list and workbench;
+      harmless (all imports are explicit), but a future polish pass
+      could rename one to silence the warning.
+  - >
+      2026-05-24 td-c004-spec (bmad-fb-td) — c004 spa-router-shell spec
+      written to specs/c004-spec.md. Decisions LOCKED (one shard, no
+      b.md yet — file ~450 lines but coherent enough to stay together):
+      S1 MOBILE = bottom nav bar (3 items) + slim top bar (NOT a drawer);
+      S2 UserChip = Profile / Theme / Logout (mobile prepends Back-to-Desk
+      since AppSwitcher absent below md); S3 router scrollBehavior =
+      preserve on back/forward, top on push (Vue Router 4 native);
+      S4 RealtimeStatusIndicator 4-state palette = connected green /
+      reconnecting amber-pulse / disconnected red "Polling (30s)" /
+      unknown gray.
+      Hex preset table LOCKED (Tailwind 3.x): Indigo #4f46e5/4338ca/
+      e0e7ff/eef2ff · Teal #0d9488/0f766e/ccfbf1/f0fdfa · Burnt Orange
+      #ea580c/c2410c/ffedd5/fff7ed · Monochrome #1f2937/111827/e5e7eb/
+      f3f4f6 · Cyan #0891b2/0e7490/cffafe/ecfeff.
+      Scope: routes table + router.js + main.js + App.vue +
+      components/Shell/* (Sidebar, MobileTopBar, MobileBottomNav,
+      AppSwitcher, NavItems, UserChip, RealtimeStatusIndicator) + theme.js
+      (PRESET_TABLE + deriveShades HSL math: -700 L-10%, -100 S<=30 L=92,
+      -50 S<=20 L=96) + colorUtils.js (hex2hsl, hsl2hex) + boot.js
+      (useSession / useCashewSettings / useDefaultPeriod /
+      hasWriteSettings / useRealtimeToken / useAppVersion / useSysDefaults)
+      + state composables (useDashboardPeriod / useCurrentRun /
+      useTheme / useIsMobile / useRealtimeStatus stub) +
+      errors.js (installErrorInterceptors w/ axios primary + fetch
+      fallback for 401/403/5xx/network -> frappe-ui Toast) +
+      onErrorCaptured shell boundary for component errors.
+      Hands off to c008: applyThemeFromDoc + setRealtimeStatus hooks
+      exported. Page stubs land for c005 / c006 / c007 / c012 to fill.
 
 next_step: >
-  Two parallel tracks:
-  1. Bench/Dev: build c013 (schema additions) — three JSON edits + bench
-     migrate. Ships ahead of c012 since c012 depends on accent_color.
-  2. TD: convert design_handoff_f010_cashew_spa + .fb/ui/ briefs into
-     per-component specs (c001 -> c013). Settings page brief lives at
-     .fb/ui/pages/settings.md. Route via bmad-fb-orch.
+  Dev phase COMPLETE — all 13 components shipped (2026-05-24 quick build
+  via bmad-fb-quick, batched in B1/B2/B3 with checkpoints). vite build
+  green; SPA serves at /frontend (deviation from arch D2 — see
+  status_history). Suggested follow-ups: smoke test parse → validate →
+  queue → posting → revert flow against a real Cashew CSV; verify
+  realtime over Socket.IO once worker emits rows[] payloads (c011);
+  consider migrating SPA URL to /cashew if the dual-prefix becomes
+  confusing (purely cosmetic).
+
+  Suggested Dev sequence (parallel tracks possible):
+  1. **Schema first:** c013 (DocType JSON edits + Cashew Settings.validate
+     hook + bench migrate) — unblocks c004 boot dict + c012 Settings.
+  2. **Server pre-flight in parallel:** c010 (api permission audit; 2
+     small patches) + c011 (realtime emission audit; helper + 8 call
+     sites).
+  3. **SPA scaffold:** c001 spa-scaffold → c002 spa-host-route → c003
+     build-hook (Doppio trio). Pre-built bundle lands at /cashew.
+  4. **Shell + landing:** c004 spa-router-shell. Page stubs appear.
+  5. **Page parallel tracks (after shell):**
+     - >
+         track A: c009 dashboard-summary-endpoint → c007 finance-dashboard
+     - >
+         track B: c005 imports-list-page
+     - >
+         track C: c006 run-workspace-page (largest; both shards)
+     - >
+         track D: c012 settings-page (depends on c013 + c004)
+  6. **Realtime closing pass:** c008 realtime-client. Drives c004's
+     useRealtimeStatus stub + ThemeController doc_update hook;
+     consumes c011's parent-emission payloads.
+
+  Per-page parallelism guidance: c005 + c007 + c006 + c012 can land
+  independently after c004 + their respective server deps; c008 ties
+  them together for live updates. Final integration is verifying the
+  smoke flows (parse → validate → queue → posting → completed) across
+  the full SPA on a test run.
 
 blocked_by: []

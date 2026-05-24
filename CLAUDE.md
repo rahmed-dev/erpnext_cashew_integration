@@ -49,9 +49,12 @@ Decision 5 (2026-05-24).
 ## SPA hosting (introduced for f010)
 
 - Pattern: Doppio-style `www/` route, identical to Frappe CRM and Helpdesk.
-- Mount: `/cashew/<path:app_path>` catch-all → `cashew_integration/www/cashew.html`
+- Mount: `/frontend/<path:app_path>` catch-all → `cashew_integration/www/frontend.html`
   → Vue Router (HTML5 history) takes over client-side.
-- Entry: `cashew_integration/www/cashew.py` does perm check + boot dict
+  **Note (2026-05-24):** arch decision D2 originally specified `/cashew/*`;
+  Dev shipped the bench `add-spa` default `/frontend/*` at user request.
+  Apps-screen tile + Vue Router base both point at `/frontend`.
+- Entry: `cashew_integration/www/frontend.py` does perm check + boot dict
   injection (csrf_token, session_user, sysdefaults, …).
 - **Role gate:** access granted to users holding Role `System Manager` OR
   `Accounts Manager`. No new role fixture introduced by f010.

@@ -9,6 +9,8 @@
  "engine": "InnoDB",
  "field_order": [
   "company",
+  "accent_color",
+  "accent_color_custom",
   "cashew_account_mapping",
   "cashew_category_mapping"
  ],
@@ -18,6 +20,22 @@
    "fieldtype": "Link",
    "label": "Default Company",
    "options": "Company"
+  },
+  {
+   "default": "Indigo",
+   "description": "Theme accent for the Cashew SPA. Pick a curated preset or 'Custom' to provide your own hex (see Custom Hex field below).",
+   "fieldname": "accent_color",
+   "fieldtype": "Select",
+   "label": "Accent Color",
+   "options": "Indigo\nTeal\nBurnt Orange\nMonochrome\nCyan\nCustom"
+  },
+  {
+   "depends_on": "eval:doc.accent_color=='Custom'",
+   "description": "Custom hex color (e.g. #3b82f6). Used only when Accent Color is 'Custom'. Six-digit hex including the leading #.",
+   "fieldname": "accent_color_custom",
+   "fieldtype": "Data",
+   "label": "Custom Hex",
+   "mandatory_depends_on": "eval:doc.accent_color=='Custom'"
   },
   {
    "fieldname": "cashew_account_mapping",

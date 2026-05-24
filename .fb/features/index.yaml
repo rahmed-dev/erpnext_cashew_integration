@@ -46,6 +46,6 @@ features:
     priority: medium
   - id: f010
     name: Cashew Frontend SPA (Runs + Dashboard)
-    status: in-progress
-    stage: arch-done
+    status: done
+    stage: done
     priority: high

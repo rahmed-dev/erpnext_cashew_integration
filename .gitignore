@@ -36,6 +36,10 @@ venv.bak/
 node_modules/
 jspm_packages/
 
+# f010 — built SPA assets (vite output; www/cashew.html shell is committed)
+cashew_integration/public/frontend/
+cashew_integration/public/node_modules/
+
 # IDEs and editors
 .vscode/
 .vs/

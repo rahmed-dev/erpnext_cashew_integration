@@ -1,0 +1,60 @@
+<script setup>
+const props = defineProps({
+  kind: { type: String, required: true }, // 'run-status' | 'row-validation' | 'row-revert' | 'txn-type'
+  value: { type: String, required: true },
+  size: { type: String, default: 'md' },  // 'sm' | 'md'
+  pulse: { type: Boolean, default: false },
+});
+
+const TABLES = {
+  'run-status': {
+    Draft:           { label: 'Draft',         cls: 'bg-gray-300 text-gray-700' },
+    Parsed:          { label: 'Parsed',        cls: 'bg-sky-100 text-sky-700' },
+    Validated:       { label: 'Validated',     cls: 'bg-blue-100 text-blue-700' },
+    Queued:          { label: 'Queued',        cls: 'bg-indigo-100 text-indigo-700' },
+    Processing:      { label: 'Processing',    cls: 'bg-indigo-100 text-indigo-700', pulse: true },
+    Completed:       { label: 'Completed',     cls: 'bg-green-100 text-green-700' },
+    Failed:          { label: 'Failed',        cls: 'bg-red-100 text-red-700' },
+    Cancelled:       { label: 'Cancelled',     cls: 'bg-gray-200 text-gray-700' },
+    Reverting:       { label: 'Reverting',     cls: 'bg-amber-100 text-amber-800', pulse: true },
+    Reverted:        { label: 'Reverted',      cls: 'bg-amber-100 text-amber-800' },
+    'Revert-Failed': { label: 'Revert Failed', cls: 'bg-red-100 text-red-800' },
+  },
+  'row-validation': {
+    Valid:   { label: 'Valid',   cls: 'bg-green-100 text-green-700' },
+    Error:   { label: 'Error',   cls: 'bg-red-100 text-red-700' },
+    Skipped: { label: 'Skipped', cls: 'bg-gray-200 text-gray-700' },
+  },
+  'row-revert': {
+    Reverted:        { label: 'Reverted',      cls: 'bg-amber-100 text-amber-800' },
+    'Revert-Failed': { label: 'Revert Failed', cls: 'bg-red-100 text-red-800' },
+  },
+  'txn-type': {
+    Income:              { label: 'Income',             cls: 'bg-green-50 text-green-700' },
+    Expense:             { label: 'Expense',            cls: 'bg-red-50 text-red-700' },
+    Transfer:            { label: 'Transfer',           cls: 'bg-slate-100 text-slate-700' },
+    'External Transfer': { label: 'External Transfer',  cls: 'bg-slate-100 text-slate-700' },
+    Adjustment:          { label: 'Adjustment',         cls: 'bg-yellow-50 text-yellow-800' },
+    'Loan Receivable':   { label: 'Loan Receivable',    cls: 'bg-violet-100 text-violet-700' },
+    'Loan Payable':      { label: 'Loan Payable',       cls: 'bg-violet-100 text-violet-700' },
+  },
+};
+
+function entry() {
+  const table = TABLES[props.kind] || {};
+  return table[props.value] || { label: props.value, cls: 'bg-gray-100 text-gray-700' };
+}
+</script>
+
+<template>
+  <span
+    v-if="entry().label"
+    :class="[
+      'inline-flex items-center rounded-full font-medium tabular-nums',
+      size === 'sm' ? 'px-2 py-0.5 text-[12px] leading-[18px]' : 'px-2.5 py-0.5 text-[13px] leading-[20px]',
+      entry().cls,
+      (pulse || entry().pulse) ? 'animate-pulse' : '',
+    ]"
+    :aria-label="`${kind}: ${entry().label}`"
+  >{{ entry().label }}</span>
+</template>

@@ -23,6 +23,15 @@ add_to_apps_screen = [
 ]
 
 
+# --- Cashew SPA (f010) --------------------------------------------------
+# website_route_rules is appended by `bench add-spa` near end of file; do not
+# duplicate the assignment here — Python's last-assignment-wins would shadow it.
+
+app_icon_url = "/assets/cashew_integration/images/cashew-app-icon.svg"
+app_icon_route = "/cashew"
+app_icon_title = "Cashew"
+
+
 # Includes in <head>
 # ------------------
 
@@ -252,3 +261,5 @@ after_install = "cashew_integration.install.after_install"
 # --------
 fixtures = []
 
+
+website_route_rules = [{'from_route': '/cashew/<path:app_path>', 'to_route': 'cashew'},]

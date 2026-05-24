@@ -29,8 +29,19 @@ from frappe.utils import now
 from cashew_integration.importer.errors import set_row_validation_error
 from cashew_integration.importer.idempotency import apply_idempotency_guard
 from cashew_integration.importer.posting import post_row, post_transfer_pair
+from cashew_integration.importer.realtime import emit_row_update
 from cashew_integration.importer.validation import validate_rows_at_queue_time, validate_run_config
 from cashew_integration.importer.diagnostics import generate_diagnostics_csv
+
+
+_ROW_PATCH_FIELDS = (
+    "validation_status", "validation_error_code", "validation_error_message",
+    "posted_doctype", "posted_docname", "posted_gl_date",
+    "is_duplicate", "exchange_rate", "base_amount",
+    "transfer_pair_row_idx", "resolved_party", "resolved_party_type",
+    "party_source", "resolved_route", "resolved_account",
+    "resolved_external_account", "revert_status", "revert_error",
+)
 
 
 # ── public: enqueue helper (called from API) ───────────────────────────────────
@@ -274,29 +285,35 @@ def _revert(run_name: str) -> None:
 
             if doc.docstatus == 2:
                 # Already cancelled externally — treat as success.
-                frappe.db.set_value("Cashew Import Row", row["name"], {
+                patch = {
                     "revert_status": "Reverted",
                     "revert_error":  None,
                     "posted_doctype": None,
                     "posted_docname": None,
-                })
+                }
+                frappe.db.set_value("Cashew Import Row", row["name"], patch)
+                emit_row_update(run_name, {"row_idx": row["row_idx"], **patch})
                 reverted += 1
 
             elif doc.docstatus == 1:
                 doc.cancel()
-                frappe.db.set_value("Cashew Import Row", row["name"], {
+                patch = {
                     "revert_status": "Reverted",
                     "revert_error":  None,
                     "posted_doctype": None,
                     "posted_docname": None,
-                })
+                }
+                frappe.db.set_value("Cashew Import Row", row["name"], patch)
+                emit_row_update(run_name, {"row_idx": row["row_idx"], **patch})
                 reverted += 1
 
             else:
-                frappe.db.set_value("Cashew Import Row", row["name"], {
+                patch = {
                     "revert_status": "Revert-Failed",
                     "revert_error":  f"{doctype} {docname} is in Draft status — cannot cancel.",
-                })
+                }
+                frappe.db.set_value("Cashew Import Row", row["name"], patch)
+                emit_row_update(run_name, {"row_idx": row["row_idx"], **patch})
                 failed += 1
 
         except Exception as exc:
@@ -304,10 +321,12 @@ def _revert(run_name: str) -> None:
                 frappe.get_traceback(),
                 f"Cashew Revert Row Error: run={run_name} doc={docname}",
             )
-            frappe.db.set_value("Cashew Import Row", row["name"], {
+            patch = {
                 "revert_status": "Revert-Failed",
                 "revert_error":  str(exc)[:500],
-            })
+            }
+            frappe.db.set_value("Cashew Import Row", row["name"], patch)
+            emit_row_update(run_name, {"row_idx": row["row_idx"], **patch})
             failed += 1
 
         if (i + 1) % progress_interval == 0:
@@ -329,7 +348,11 @@ def _row_to_dict(child_row) -> dict:
 
 
 def _write_row_result(run, row: dict) -> None:
-    """Persist result fields back to the child table row via db.set_value."""
+    """Persist result fields back to the child table row via db.set_value.
+
+    Emits a synthetic parent-run `doc_update` carrying the row patch
+    so the SPA (c008) can apply per-row updates without polling.
+    """
     frappe.db.set_value(
         "Cashew Import Row",
         {"parent": run.name, "row_idx": row["row_idx"]},
@@ -355,6 +378,16 @@ def _write_row_result(run, row: dict) -> None:
             "resolved_external_account": row.get("resolved_external_account"),
         },
     )
+    emit_row_update(run.name, _row_patch(row))
+
+
+def _row_patch(row: dict) -> dict:
+    """Build a compact realtime patch dict from a row's current state."""
+    patch = {"row_idx": row.get("row_idx")}
+    for field in _ROW_PATCH_FIELDS:
+        if field in row:
+            patch[field] = row.get(field)
+    return patch
 
 
 def _update_counters(run, posted: int, failed: int, skipped: int) -> None:

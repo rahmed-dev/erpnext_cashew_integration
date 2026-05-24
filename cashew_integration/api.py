@@ -27,7 +27,33 @@ from cashew_integration.importer.validation import (
     check_category_account_class,
 )
 from cashew_integration.importer.idempotency import apply_idempotency_guard
+from cashew_integration.importer.realtime import emit_row_update_batch
 from cashew_integration.importer.worker import enqueue_run, enqueue_revert
+
+
+_REALTIME_ROW_PATCH_FIELDS = (
+    "validation_status", "validation_error_code", "validation_error_message",
+    "posted_doctype", "posted_docname", "posted_gl_date",
+    "is_duplicate", "exchange_rate", "base_amount",
+    "transfer_pair_row_idx", "resolved_party", "resolved_party_type",
+    "party_source", "resolved_route", "resolved_account",
+    "resolved_external_account", "revert_status", "revert_error",
+    "txn_type", "requires_party",
+)
+
+
+def _row_patch(row) -> dict:
+    """Build a compact realtime patch dict from a row dict or child doc."""
+    if isinstance(row, dict):
+        get = row.get
+    else:
+        get = row.get  # frappe child docs also expose .get(fieldname)
+    patch = {"row_idx": get("row_idx")}
+    for field in _REALTIME_ROW_PATCH_FIELDS:
+        value = get(field)
+        if value is not None:
+            patch[field] = value
+    return patch
 
 
 # ── row-explorer mutation gating ───────────────────────────────────────────────
@@ -222,6 +248,7 @@ def validate_import(run_name: str) -> dict:
                 "requires_party":           row.get("requires_party", 0),
             },
         )
+    emit_row_update_batch(run.name, [_row_patch(r) for r in rows])
 
     valid_count = sum(1 for r in rows if r.get("validation_status") == "Valid")
     failed_count = sum(1 for r in rows if r.get("validation_status") == "Error")
@@ -309,6 +336,7 @@ def queue_run(run_name: str) -> dict:
                 "posted_docname":           row.get("posted_docname"),
             },
         )
+    emit_row_update_batch(run.name, [_row_patch(r) for r in rows])
 
     valid_count = sum(1 for r in rows if r.get("validation_status") == "Valid")
     failed_count = sum(1 for r in rows if r.get("validation_status") == "Error")
@@ -400,7 +428,7 @@ def get_run_progress(run_name: str) -> dict:
     Permission: Accountant or System Manager (read access suffices).
     """
     run = frappe.get_doc("Cashew Import Run", run_name)
-    frappe.has_permission("Cashew Import Run", doc=run, throw=True)
+    frappe.has_permission("Cashew Import Run", ptype="read", doc=run, throw=True)
 
     return {
         "status":       run.status,
@@ -428,6 +456,9 @@ def setup_from_csv(file_url: str, company: str | None = None) -> dict:
 
     Permission: System Manager only.
     """
+    frappe.has_permission("Cashew Import Run", ptype="create", throw=True)
+    if company:
+        frappe.has_permission("Company", ptype="read", doc=company, throw=True)
     frappe.only_for("System Manager")
 
     from cashew_integration.setup import run_setup_from_csv
@@ -576,6 +607,7 @@ def row_explorer_set_party(
 
     run.save(ignore_permissions=False)
     frappe.db.commit()
+    emit_row_update_batch(run.name, [_row_patch(r) for r in updated])
     return {"updated": updated}
 
 
@@ -639,4 +671,385 @@ def row_explorer_revalidate(
 
     run.save(ignore_permissions=False)
     frappe.db.commit()
+    emit_row_update_batch(run.name, [_row_patch(r) for r in revalidated])
     return {"revalidated": revalidated}
+
+
+# ---------------------------------------------------------------------------
+# c009 — Finance Dashboard summary (D5 rule 4, D9 GL-derived).
+# Sole consumer: SPA Finance Dashboard (c007). Read-only; idempotent.
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def dashboard_summary(
+    period_start: str | None = None,
+    period_end: str | None = None,
+    company: str | None = None,
+) -> dict:
+    """Headline numbers for the SPA landing dashboard for a (period, company)."""
+    if not period_start or not period_end:
+        frappe.throw(_("period_start and period_end are required"))
+    if not company:
+        company = frappe.defaults.get_user_default("Company")
+    if not company:
+        frappe.throw(_("company is required"))
+
+    frappe.has_permission("GL Entry", "read", throw=True)
+    frappe.has_permission("Account", "read", throw=True)
+    frappe.has_permission("Company", "read", doc=company, throw=True)
+
+    currency = frappe.db.get_value("Company", company, "default_currency") or "PKR"
+
+    income_total, expense_total, income_cats, expense_cats = _period_pnl(
+        company, period_start, period_end
+    )
+
+    balance_tiles = _balance_tiles(
+        company, period_start, period_end, income_total - expense_total
+    )
+
+    assets_by_account = _top_assets(company, period_end, n=10)
+
+    recent_runs = _recent_runs(company)
+
+    return {
+        "period": {"start": period_start, "end": period_end},
+        "company": company,
+        "currency": currency,
+        "income_total": _r(income_total),
+        "expense_total": _r(expense_total),
+        "income_by_account": income_cats,
+        "expense_by_account": expense_cats,
+        "assets_by_account": assets_by_account,
+        "balance_tiles": balance_tiles,
+        "recent_runs": recent_runs,
+    }
+
+
+def _r(x: float) -> float:
+    return round(float(x or 0.0), 2)
+
+
+def _period_pnl(company: str, start: str, end: str):
+    """Returns (income_total, expense_total, top_income_accounts, top_expense_accounts).
+
+    Breakdown buckets by Chart-of-Accounts `account_name` — GL Entry's
+    `account` Link → Account.account_name. Falls back to the account
+    name field when account_name is empty.
+    """
+    gl = frappe.qb.DocType("GL Entry")
+    acc = frappe.qb.DocType("Account")
+    pnl_rows = (
+        frappe.qb.from_(gl)
+        .inner_join(acc).on(gl.account == acc.name)
+        .select(
+            gl.account, acc.account_name, acc.root_type,
+            gl.debit, gl.credit,
+        )
+        .where(
+            (gl.company == company)
+            & (gl.posting_date[start:end])
+            & (gl.is_cancelled == 0)
+            & (acc.root_type.isin(["Income", "Expense"]))
+        )
+    ).run(as_dict=True)
+
+    income_total = 0.0
+    expense_total = 0.0
+    income_by_acc: dict[str, float] = {}
+    expense_by_acc: dict[str, float] = {}
+
+    for r in pnl_rows:
+        label = r.account_name or r.account or "(Uncategorized)"
+        if r.root_type == "Income":
+            amt = (r.credit or 0.0) - (r.debit or 0.0)
+            if amt <= 0:
+                continue
+            income_total += amt
+            income_by_acc[label] = income_by_acc.get(label, 0.0) + amt
+        else:
+            amt = (r.debit or 0.0) - (r.credit or 0.0)
+            if amt <= 0:
+                continue
+            expense_total += amt
+            expense_by_acc[label] = expense_by_acc.get(label, 0.0) + amt
+
+    return (
+        income_total,
+        expense_total,
+        _top_n_with_other(income_by_acc, 10),
+        _top_n_with_other(expense_by_acc, 10),
+    )
+
+
+def _top_n_with_other(by_label: dict, n: int) -> list[dict]:
+    items = sorted(by_label.items(), key=lambda kv: kv[1], reverse=True)
+    head = items[:n]
+    tail = items[n:]
+    out = [{"account": c, "amount": _r(a)} for c, a in head]
+    if tail:
+        other_amt = sum(a for _, a in tail)
+        out.append({"account": "(Other)", "amount": _r(other_amt)})
+    return out
+
+
+def _balance_tiles(company: str, period_start: str, period_end: str,
+                   net_for_period: float) -> dict:
+    prior_end = _date_minus_1(period_start)
+
+    def _balance(account_filters: dict, as_of: str) -> float:
+        gl = frappe.qb.DocType("GL Entry")
+        acc = frappe.qb.DocType("Account")
+        rows = (
+            frappe.qb.from_(gl)
+            .inner_join(acc).on(gl.account == acc.name)
+            .select(acc.root_type, gl.debit, gl.credit)
+            .where(
+                (gl.company == company)
+                & (gl.posting_date <= as_of)
+                & (gl.is_cancelled == 0)
+                & _account_qb_filter(acc, account_filters)
+            )
+        ).run(as_dict=True)
+        total = 0.0
+        for r in rows:
+            if r.root_type == "Asset":
+                total += (r.debit or 0.0) - (r.credit or 0.0)
+            else:
+                total += (r.credit or 0.0) - (r.debit or 0.0)
+        return total
+
+    cash_bank_amount  = _balance({"account_type": ["in", ["Bank", "Cash"]]}, period_end)
+    cash_bank_prior   = _balance({"account_type": ["in", ["Bank", "Cash"]]}, prior_end) if prior_end else None
+    receivable_amount = _balance({"account_type": "Receivable"}, period_end)
+    receivable_prior  = _balance({"account_type": "Receivable"}, prior_end) if prior_end else None
+    payable_amount    = _balance({"account_type": "Payable"}, period_end)
+    payable_prior     = _balance({"account_type": "Payable"}, prior_end) if prior_end else None
+
+    return {
+        "cash_bank":      {"amount": _r(cash_bank_amount),
+                           "prior_amount": _r(cash_bank_prior) if cash_bank_prior is not None else None},
+        "receivable":     {"amount": _r(receivable_amount),
+                           "prior_amount": _r(receivable_prior) if receivable_prior is not None else None},
+        "payable":        {"amount": _r(payable_amount),
+                           "prior_amount": _r(payable_prior) if payable_prior is not None else None},
+        "net_for_period": {"amount": _r(net_for_period)},
+    }
+
+
+def _date_minus_1(date_str: str) -> str | None:
+    from datetime import datetime, timedelta
+    if not date_str:
+        return None
+    return (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _top_assets(company: str, as_of: str, n: int = 10) -> list[dict]:
+    """Top Asset accounts by absolute closing balance as of `as_of`.
+
+    Each row reports balance in its own account currency AND the equivalent
+    in the company's base currency (so cross-currency sort / totalling is
+    meaningful). Sort key = abs(base_amount).
+    """
+    company_currency = frappe.db.get_value("Company", company, "default_currency") or ""
+    gl = frappe.qb.DocType("GL Entry")
+    acc = frappe.qb.DocType("Account")
+    rows = (
+        frappe.qb.from_(gl)
+        .inner_join(acc).on(gl.account == acc.name)
+        .select(
+            gl.account, acc.account_name, acc.account_currency,
+            gl.debit_in_account_currency, gl.credit_in_account_currency,
+            gl.debit, gl.credit,
+        )
+        .where(
+            (gl.company == company)
+            & (gl.posting_date <= as_of)
+            & (gl.is_cancelled == 0)
+            & (acc.root_type == "Asset")
+        )
+    ).run(as_dict=True)
+
+    by_acc: dict = {}
+    for r in rows:
+        key = (r.account, r.account_name or r.account, r.account_currency or company_currency)
+        acct_delta = (r.debit_in_account_currency or 0.0) - (r.credit_in_account_currency or 0.0)
+        base_delta = (r.debit or 0.0) - (r.credit or 0.0)
+        agg = by_acc.get(key, (0.0, 0.0))
+        by_acc[key] = (agg[0] + acct_delta, agg[1] + base_delta)
+
+    items = [
+        {
+            "account": name,
+            "amount": _r(acct_bal),
+            "currency": curr,
+            "base_amount": _r(base_bal),
+            "base_currency": company_currency,
+        }
+        for (_acc, name, curr), (acct_bal, base_bal) in by_acc.items()
+        if abs(base_bal) > 0.005
+    ]
+    items.sort(key=lambda x: abs(x["base_amount"]), reverse=True)
+    return items[:n]
+
+
+@frappe.whitelist()
+def balance_tile_detail(
+    company: str | None = None,
+    tile: str | None = None,
+    as_of: str | None = None,
+) -> dict:
+    """Drill-down for Cash/Bank, Receivable, Payable balance tiles.
+
+    - `cash_bank`  → list of accounts (account_type Cash or Bank) with closing balance
+    - `receivable` → list of {party_type, party, balance} for Receivable accounts
+    - `payable`    → same shape, sign flipped (open payables shown positive)
+
+    All balances returned in each account's own currency.
+    """
+    if not company or not tile:
+        frappe.throw(_("company and tile are required"))
+    if tile not in ("cash_bank", "receivable", "payable"):
+        frappe.throw(_("invalid tile id"))
+    if not as_of:
+        as_of = frappe.utils.today()
+
+    frappe.has_permission("GL Entry", "read", throw=True)
+    frappe.has_permission("Account", "read", throw=True)
+    frappe.has_permission("Company", "read", doc=company, throw=True)
+
+    company_currency = frappe.db.get_value("Company", company, "default_currency") or "PKR"
+
+    if tile == "cash_bank":
+        items = _detail_cash_bank(company, as_of, company_currency)
+    else:
+        account_type = "Receivable" if tile == "receivable" else "Payable"
+        items = _detail_party_balance(company, as_of, account_type, company_currency)
+
+    return {
+        "tile": tile,
+        "as_of": as_of,
+        "company": company,
+        "company_currency": company_currency,
+        "items": items,
+    }
+
+
+def _detail_cash_bank(company: str, as_of: str, company_currency: str) -> list[dict]:
+    gl = frappe.qb.DocType("GL Entry")
+    acc = frappe.qb.DocType("Account")
+    rows = (
+        frappe.qb.from_(gl)
+        .inner_join(acc).on(gl.account == acc.name)
+        .select(
+            gl.account, acc.account_name, acc.account_currency, acc.account_type,
+            gl.debit_in_account_currency, gl.credit_in_account_currency,
+            gl.debit, gl.credit,
+        )
+        .where(
+            (gl.company == company)
+            & (gl.posting_date <= as_of)
+            & (gl.is_cancelled == 0)
+            & (acc.account_type.isin(["Bank", "Cash"]))
+        )
+    ).run(as_dict=True)
+
+    by_acc: dict = {}
+    for r in rows:
+        key = (r.account, r.account_name or r.account, r.account_currency or company_currency, r.account_type)
+        acct_delta = (r.debit_in_account_currency or 0.0) - (r.credit_in_account_currency or 0.0)
+        base_delta = (r.debit or 0.0) - (r.credit or 0.0)
+        agg = by_acc.get(key, (0.0, 0.0))
+        by_acc[key] = (agg[0] + acct_delta, agg[1] + base_delta)
+
+    items = [
+        {
+            "account": name,
+            "account_type": atype,
+            "balance": _r(acct_bal),
+            "currency": curr,
+            "base_balance": _r(base_bal),
+            "base_currency": company_currency,
+        }
+        for (_acc, name, curr, atype), (acct_bal, base_bal) in by_acc.items()
+        if abs(base_bal) > 0.005
+    ]
+    items.sort(key=lambda x: abs(x["base_balance"]), reverse=True)
+    return items
+
+
+def _detail_party_balance(company: str, as_of: str, account_type: str,
+                          company_currency: str) -> list[dict]:
+    """Group open balances by party. Receivable = positive when customer owes you,
+    Payable = positive when you owe the supplier."""
+    sign = 1 if account_type == "Receivable" else -1
+
+    gl = frappe.qb.DocType("GL Entry")
+    acc = frappe.qb.DocType("Account")
+    rows = (
+        frappe.qb.from_(gl)
+        .inner_join(acc).on(gl.account == acc.name)
+        .select(
+            gl.party_type, gl.party, gl.account, acc.account_currency,
+            gl.debit_in_account_currency, gl.credit_in_account_currency,
+            gl.debit, gl.credit,
+        )
+        .where(
+            (gl.company == company)
+            & (gl.posting_date <= as_of)
+            & (gl.is_cancelled == 0)
+            & (acc.account_type == account_type)
+            & (gl.party.notnull())
+            & (gl.party != "")
+        )
+    ).run(as_dict=True)
+
+    by_party: dict = {}
+    for r in rows:
+        key = (r.party_type, r.party, r.account_currency or company_currency)
+        acct_delta = ((r.debit_in_account_currency or 0.0) - (r.credit_in_account_currency or 0.0)) * sign
+        base_delta = ((r.debit or 0.0) - (r.credit or 0.0)) * sign
+        agg = by_party.get(key, (0.0, 0.0))
+        by_party[key] = (agg[0] + acct_delta, agg[1] + base_delta)
+
+    items = [
+        {
+            "party_type": pt,
+            "party": p,
+            "balance": _r(acct_bal),
+            "currency": curr,
+            "base_balance": _r(base_bal),
+            "base_currency": company_currency,
+        }
+        for (pt, p, curr), (acct_bal, base_bal) in by_party.items()
+        if abs(base_bal) > 0.005
+    ]
+    items.sort(key=lambda x: abs(x["base_balance"]), reverse=True)
+    return items
+
+
+def _account_qb_filter(acc_qb, filters: dict):
+    pred = None
+    for k, v in filters.items():
+        if isinstance(v, list) and len(v) == 2 and v[0] == "in":
+            p = getattr(acc_qb, k).isin(v[1])
+        else:
+            p = getattr(acc_qb, k) == v
+        pred = p if pred is None else (pred & p)
+    return pred
+
+
+def _recent_runs(company: str) -> list[dict]:
+    return frappe.get_all(
+        "Cashew Import Run",
+        filters={"company": company},
+        fields=[
+            "name", "status", "company",
+            "period_start", "period_end",
+            "rows_total", "rows_valid", "rows_failed", "rows_posted", "rows_skipped",
+            "modified",
+        ],
+        order_by="modified desc",
+        limit=5,
+        ignore_permissions=False,
+    )

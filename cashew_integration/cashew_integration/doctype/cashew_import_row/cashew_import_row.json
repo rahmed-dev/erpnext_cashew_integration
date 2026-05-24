@@ -38,6 +38,7 @@
   "transfer_pair_row_idx",
   "section_break_22",
   "validation_status",
+  "validation_severity",
   "validation_error_code",
   "validation_error_message",
   "posted_doctype",
@@ -274,6 +275,16 @@
    "label": "Validation Status",
    "options": "Valid\nError\nSkipped",
    "reqd": 1
+  },
+  {
+   "default": "Error",
+   "depends_on": "eval:doc.validation_status=='Error'",
+   "description": "Severity of the validation result. Error blocks validate/queue. Warning/Info are advisory only.",
+   "fieldname": "validation_severity",
+   "fieldtype": "Select",
+   "label": "Validation Severity",
+   "options": "Error\nWarning\nInfo",
+   "read_only": 1
   },
   {
    "fieldname": "validation_error_code",

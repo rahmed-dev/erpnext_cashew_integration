@@ -1,8 +1,13 @@
 # Copyright (c) 2026, riz, Email: ra9496300@gmail.com
 # MIT License (MIT)
 
+import re
+
 import frappe
+from frappe import _
 from frappe.model.document import Document
+
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class CashewSettings(Document):
@@ -11,6 +16,19 @@ class CashewSettings(Document):
     def validate(self):
         self._validate_unique_account_names()
         self._validate_unique_category_pairs()
+        self._validate_accent_color()
+
+    def _validate_accent_color(self):
+        if self.accent_color == "Custom":
+            value = (self.accent_color_custom or "").strip()
+            if not _HEX_RE.match(value):
+                frappe.throw(
+                    _("Custom Accent Color must be a 6-digit hex like #3b82f6"),
+                    title=_("Invalid Accent Color"),
+                )
+            self.accent_color_custom = value
+        else:
+            self.accent_color_custom = None
 
     def _validate_unique_account_names(self):
         seen = set()

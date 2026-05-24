@@ -29,6 +29,8 @@
   "started_on",
   "finished_on",
   "diagnostics_file",
+  "notes_section",
+  "notes",
   "section_break_rows",
   "import_rows"
  ],
@@ -165,6 +167,19 @@
    "fieldtype": "Attach",
    "label": "Diagnostics CSV",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:!doc.notes",
+   "fieldname": "notes_section",
+   "fieldtype": "Section Break",
+   "label": "Operator Notes"
+  },
+  {
+   "description": "Freeform operator notes for this import run. Editable at any lifecycle stage.",
+   "fieldname": "notes",
+   "fieldtype": "Long Text",
+   "label": "Notes"
   },
   {
    "fieldname": "section_break_rows",

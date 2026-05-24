@@ -1,0 +1,24 @@
+{
+  "name": "cashew_integration",
+  "version": "1.0.0",
+  "description": "A Frappe/ERPNext v16 app that imports transactions from the [Cashew](https://cashewapp.web.app/) personal finance app into ERPNext as Sales Invoices, Purchase Invoices, and Journal Entries.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "cd frontend && yarn install",
+    "dev": "cd frontend && yarn dev",
+    "build": "cd frontend && yarn build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rahmed-dev/erpnext_cashew_integration.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/rahmed-dev/erpnext_cashew_integration/issues"
+  },
+  "homepage": "https://github.com/rahmed-dev/erpnext_cashew_integration#readme"
+}
