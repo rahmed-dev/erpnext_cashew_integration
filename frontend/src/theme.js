@@ -26,6 +26,18 @@ export function deriveShades(hex) {
 function applyToRoot(shades) {
   const root = document.documentElement;
   VAR_NAMES.forEach((name, i) => root.style.setProperty(name, shades[i]));
+  // c014: keep browser chrome (mobile address bar + PWA splash hint) in
+  // sync with the accent. Installed PWA's manifest theme_color is locked
+  // at install-time; this live update only affects the running tab.
+  if (typeof document !== 'undefined') {
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.setAttribute('name', 'theme-color');
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute('content', shades[0]);
+  }
 }
 
 export const ThemeController = {

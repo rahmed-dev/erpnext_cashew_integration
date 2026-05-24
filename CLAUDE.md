@@ -49,13 +49,11 @@ Decision 5 (2026-05-24).
 ## SPA hosting (introduced for f010)
 
 - Pattern: Doppio-style `www/` route, identical to Frappe CRM and Helpdesk.
-- Mount: `/frontend/<path:app_path>` catch-all → `cashew_integration/www/frontend.html`
+- Mount: `/cashew/<path:app_path>` catch-all → `cashew_integration/www/cashew.html`
   → Vue Router (HTML5 history) takes over client-side.
-  **Note (2026-05-24):** arch decision D2 originally specified `/cashew/*`;
-  Dev shipped the bench `add-spa` default `/frontend/*` at user request.
-  Apps-screen tile + Vue Router base both point at `/frontend`.
-- Entry: `cashew_integration/www/frontend.py` does perm check + boot dict
-  injection (csrf_token, session_user, sysdefaults, …).
+  Live state per `hooks.py` website_route_rules (verified 2026-05-25).
+- Entry: `cashew_integration/www/cashew.py` does perm check + boot dict
+  injection (csrf_token, session_user, sysdefaults, cashew_settings, …).
 - **Role gate:** access granted to users holding Role `System Manager` OR
   `Accounts Manager`. No new role fixture introduced by f010.
 - Auth: same-origin Frappe session cookie + CSRF from `window.boot.csrf_token`.
@@ -63,17 +61,58 @@ Decision 5 (2026-05-24).
 - Build: `bench build --app cashew_integration` triggers `yarn build` in
   `frontend/` via Doppio `build.json` hook. Commit `www/cashew.html` (tiny shell);
   gitignore `public/frontend/` and `frontend/node_modules`.
-- **PWA on.** `vite-plugin-pwa` is kept; manifest + service worker shipped.
-  Service worker is intentionally future-proofing for an installable surface,
-  not used for offline work in v1.
-- **Apps-screen tile:** label `"Cashew"`, custom SVG icon committed at
-  `cashew_integration/public/images/cashew-app-icon.svg`.
+- **PWA installable (c014, 2026-05-25).** Two extra route rules ahead of
+  the catch-all:
+  - `/cashew/sw.js` → custom page_renderer (`cashew_integration.pwa.CashewPWAFile`)
+    serves the built `public/frontend/sw.js` with header
+    `Service-Worker-Allowed: /cashew/` so SW scope covers the SPA root
+    (required for Chrome install criteria — SW must control `start_url`).
+  - `/cashew/manifest.webmanifest` → same renderer, **dynamic**: builds the
+    manifest JSON each request, resolving `theme_color` from
+    `Cashew Settings.accent_color` (preset → hex via `ACCENT_PRESETS`
+    mirror of `frontend/src/theme.js` PRESET_TABLE; Custom hex passthrough;
+    Indigo fallback on invalid).
+  - SW registration in `frontend/src/main.js`: PROD-only,
+    `navigator.serviceWorker.register('/cashew/sw.js', { scope: '/cashew/' })`.
+  - VitePWA configured with `manifest: false` (dynamic endpoint is the
+    single source of truth) and `inlineWorkboxRuntime: true` (self-contained
+    sw.js, no separate workbox-*.js to fetch).
+  - `ThemeController.applyToRoot` also updates `<meta name="theme-color">`
+    at runtime so browser chrome retints when accent changes; the installed
+    PWA's manifest theme_color is locked at install time.
+- **Icon family (c015, 2026-05-25).** All **five** icon surfaces use
+  MIT-licensed open-source glyphs — no in-house icon design.
+  - **Legacy `/desk` apps grid (the v16 default landing for many users):**
+    rendered from `Desktop Icon` DocType — NOT from `add_to_apps_screen`.
+    Fixture at `cashew_integration/desktop_icon/cashew_integration.json`
+    (icon_type="App", logo_url points to the SVG below). Without this row
+    the cashew tile does NOT appear at `/desk` even if every other hook
+    is correct. ERPNext + Frappe ship the same kind of JSON fixture per app.
+  - Desk apps-screen tile (`add_to_apps_screen[0].logo`) + `app_logo_url`:
+    `cashew_integration/public/images/cashew-integration-logo.svg`.
+  - Cashew SPA / PWA: `frontend/public/favicon.svg`. PWA install PNGs
+    (64/192/512 + maskable-512 + apple-touch-180 + favicon.ico) generated
+    by `@vite-pwa/assets-generator` (`minimal-2023` preset) from this SVG.
+  - Cashew-internal logo affordance (`app_icon_url`):
+    `cashew_integration/public/images/cashew-app-icon.svg`.
+  - All three SVGs ship the same glyph: **Tabler Icons `chart-donut`
+    (filled)**, MIT, `fill="#4f46e5"` (matches default
+    `Cashew Settings.accent_color` = Indigo so first paint is coherent).
+  - Workspace sidebar icon: lucide `chart-pie` (set in the workspace
+    JSON `icon` field; lucide is Frappe's bundled v16 sprite — no
+    fixture or `app_include_icons` entry needed).
+  - When changing the icon: replace those three SVGs from a library
+    (lucide/tabler/phosphor/heroicons all OK; keep MIT/ISC), then run
+    `cd frontend && npx @vite-pwa/assets-generator --preset minimal-2023
+    public/favicon.svg` to regen the PNGs, then `bench build --app
+    cashew_integration`. The `Desktop Icon` fixture and workspace JSON
+    keep working unchanged (they reference the asset path).
 - **Responsive v1.** All SPA surfaces (runs list, run detail, dashboard) usable
   on mobile and tablet, not desktop-only. Use frappe-ui responsive primitives.
 - "Back to Desk" link in the SPA shell points to `/app` (ERPNext home).
 
 **Source decisions:** `.fb/features/f010-cashew-frontend-spa/arch/decisions.md` →
-Decisions 1–4 (2026-05-24).
+Decisions 1–4 (2026-05-24); `feature.yaml` component c014 (2026-05-25).
 
 ## Other surfaces in this app (not the SPA)
 

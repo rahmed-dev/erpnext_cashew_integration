@@ -448,6 +448,152 @@ components:
       "Error" alongside; future validator classes may emit
       Warning/Info. Workbench treats Warning rows as queueable;
       Error still blocks queue_run.
+  - id: c014
+    name: pwa-installable
+    type: ui-infra
+    stage: done
+    depends_on:
+      - c001
+      - c002
+      - c013
+    desc: >
+      Wire the SPA as an installable PWA on mobile and desktop. Honors
+      arch D1 ("PWA kept on, future-proofing for installable surface"),
+      which the original Dev pass left unwired.
+      Pieces:
+      (a) vite-plugin-pwa (generateSW + inlineWorkboxRuntime) emits a
+          single self-contained sw.js into public/frontend/. Precache
+          URLs are absolute under /assets/cashew_integration/frontend/
+          (modifyURLPrefix) so the SW resolves them correctly when
+          served from /cashew/sw.js. cashew.html is never precached
+          (Jinja-rendered each request - CSRF + window.boot must stay
+          fresh); navigations use NetworkFirst with 5s timeout.
+      (b) @vite-pwa/assets-generator built five PNGs from
+          frontend/public/favicon.svg (pwa-64/192/512, maskable-512,
+          apple-touch-180) + favicon.ico into frontend/public/.
+      (c) cashew_integration/pwa.py - custom page_renderer registered
+          via hooks.page_renderer. Serves /cashew/sw.js with header
+          Service-Worker-Allowed: /cashew/ so the SW (which physically
+          lives at /assets/cashew_integration/frontend/sw.js inside the
+          build output) can control the /cashew/ scope - required for
+          Chrome PWA install criteria (SW must control start_url).
+          Same renderer serves /cashew/manifest.webmanifest DYNAMICALLY:
+          reads Cashew Settings.accent_color (preset or custom hex),
+          maps through ACCENT_PRESETS mirror of theme.js PRESET_TABLE,
+          returns JSON with theme_color tracking the live setting.
+      (d) hooks.website_route_rules - two explicit higher-priority
+          routes (/cashew/sw.js, /cashew/manifest.webmanifest) added
+          before the existing /cashew/<path:app_path> catch-all so they
+          short-circuit to the renderer; Werkzeug picks the most
+          specific match.
+      (e) main.js registers the SW from /cashew/sw.js with explicit
+          scope:/cashew/, PROD-only (skipped in vite dev).
+      (f) index.html ships theme-color, apple-touch-icon, mobile- /
+          apple-mobile-web-app-capable, status-bar-style meta tags +
+          manual <link rel="manifest" href="/cashew/manifest.webmanifest">.
+          VitePWA's static manifest emission is disabled (manifest:false)
+          so the dynamic endpoint is the single source of truth.
+      (g) ThemeController.applyToRoot now also updates the
+          <meta name="theme-color"> tag at runtime so browser chrome
+          retints when the user changes accent (installed PWA's
+          manifest theme_color is locked at install time; live updates
+          only affect the running tab via the meta tag).
+
+      Status: shipped 2026-05-25 (quick build, vite build green; 30
+      precache entries, ~1.5MB inlined SW; manifest endpoint unit-
+      tested for Indigo/Teal/Custom/fallback paths).
+      Notes: arch decision D1's PWA hook is now satisfied. The SPA at
+      /cashew satisfies Chrome's install criteria (HTTPS terminated by
+      bench/nginx; SW with fetch handler; valid manifest; SW scope
+      includes start_url). User can Add-to-Home-Screen on Android
+      Chrome and iOS Safari; desktop Chrome shows the install icon in
+      the address bar.
+
+  - id: c015
+    name: app-icon-family
+    type: ui-infra
+    stage: done
+    depends_on:
+      - c014
+    desc: >
+      Replace placeholder iconography across all FIVE surfaces with a
+      coherent family sourced from MIT-licensed open-source libraries.
+      No in-house icon design - rationale: keeps the visual identity
+      stable, retintable, and free of bespoke design debt.
+      Pieces:
+      (a) Desk apps-screen tile + app_logo_url. Pre-c015 state:
+          add_to_apps_screen[0].logo pointed at
+          /assets/frappe/images/frappe-framework-logo.svg (Frappe
+          placeholder) and app_logo_url referenced
+          cashew-integration-logo.svg which DID NOT EXIST on disk
+          (silently 404, browser fell back to default). Now both
+          point at a real /assets/cashew_integration/images/
+          cashew-integration-logo.svg.
+      (b) New Tabler Icons "chart-donut" (filled) shipped to three
+          paths as identical 24x24 SVGs with fill="#4f46e5" (default
+          accent = Indigo, matches default Cashew Settings.accent_color
+          + default manifest theme_color so first paint is coherent):
+            - public/images/cashew-integration-logo.svg (Desk tile +
+              app_logo_url)
+            - public/images/cashew-app-icon.svg (app_icon_url - the
+              cashew-internal logo affordance)
+            - frontend/public/favicon.svg (SPA tab icon + PWA install
+              source)
+          Source: tabler-icons main branch icons/filled/chart-donut.svg
+          (MIT). Attribution comment kept inline in each SVG.
+      (c) PWA install PNGs regenerated from new favicon.svg via
+          @vite-pwa/assets-generator (minimal-2023 preset): pwa-64,
+          pwa-192, pwa-512, maskable-512, apple-touch-180, favicon.ico.
+          Dynamic manifest endpoint (c014) already references these
+          paths; no manifest endpoint change needed.
+      (d) Workspace sidebar icon. The Workspace doctype's "icon" field
+          is an Icon control referencing Frappe's bundled lucide
+          sprite (v16 default; see frappe hooks app_include_icons).
+          Workspace JSON updated:
+            cashew_integration/workspace/cashew_integration/
+            cashew_integration.json
+              "icon": "upload" -> "icon": "chart-pie"
+          chart-pie is part of the lucide sprite shipped at
+          /assets/frappe/icons/lucide/icons.svg - no fixture or
+          sprite-include needed on cashew side. Note: bench migrate
+          does NOT overwrite an existing Workspace row's icon (user-
+          editable), so DB drift also fixed via
+          frappe.db.set_value("Workspace","Cashew Integration","icon","chart-pie").
+
+      (e) Legacy /desk apps grid (v16-still-active landing for users with
+          home_page=/desk). This surface was discovered missing during
+          live test 2026-05-25: cashew tile absent from /desk grid even
+          though every hook above was correct. Root cause: /desk reads
+          frappe.boot.desktop_icons, populated from the Desktop Icon
+          DocType - a JSON-fixture-per-app pattern (ERPNext + Frappe
+          ship one App-type Desktop Icon each). Fix shipped:
+            cashew_integration/desktop_icon/cashew_integration.json
+              icon_type: "App"
+              link: "/app/cashew-integration"
+              link_type: "External"
+              logo_url: "/assets/cashew_integration/images/
+                         cashew-integration-logo.svg"
+              standard: 1
+              hidden: 0
+          Auto-exported by Frappe dev-mode when inserted via
+          frappe.new_doc("Desktop Icon").insert(). bench migrate on
+          fresh installs imports the JSON via standard doctype path.
+          Cache-invalidate via
+          frappe.desk.doctype.desktop_icon.desktop_icon.clear_desktop_icons_cache().
+
+      Why open-source library, not custom: user explicitly directed
+      "we should not build the icons - don't we have any open source
+      icon library". Tabler + lucide families both ship as MIT/ISC
+      and cover finance/data-viz glyphs cleanly. chart-donut-filled
+      reads at 16px (favicon) and 512px (PWA install) without losing
+      structure; chart-pie at the sidebar matches the family without
+      requiring a custom sprite.
+
+      Status: shipped 2026-05-25 (quick build). vite build green;
+      bench --site work.local clear-cache; live-verified via in-bench
+      probe: manifest endpoint returns 200 with the four icon
+      references; SW endpoint unchanged (200, Service-Worker-Allowed:
+      /cashew/). All three SVG files on disk, 784 bytes each.
 
 status_history:
   - 2026-05-24 arch-done (bmad-fb-architect) — 8 decisions recorded;
@@ -637,6 +783,45 @@ status_history:
       onErrorCaptured shell boundary for component errors.
       Hands off to c008: applyThemeFromDoc + setRealtimeStatus hooks
       exported. Page stubs land for c005 / c006 / c007 / c012 to fill.
+  - >
+      2026-05-25 c014-pwa-installable (bmad-fb-quick) - PWA wiring
+      shipped, fulfilling arch D1 which the original Dev pass left
+      unwired. vite-plugin-pwa generateSW + inlineWorkboxRuntime (30
+      precache entries, single self-contained sw.js); @vite-pwa/assets-
+      generator produced 64/192/512 + maskable-512 + apple-touch-180
+      PNGs from favicon.svg. Custom Frappe page_renderer
+      (cashew_integration/pwa.py) serves /cashew/sw.js with
+      Service-Worker-Allowed: /cashew/ AND /cashew/manifest.webmanifest
+      DYNAMICALLY (theme_color resolves from Cashew Settings.accent_color
+      via ACCENT_PRESETS mirror of theme.js PRESET_TABLE; honors Custom
+      hex + falls back to Indigo on invalid). Two new website_route_rules
+      added before catch-all. main.js registers SW PROD-only with explicit
+      scope. ThemeController.applyToRoot also live-updates
+      <meta name="theme-color"> so browser chrome retints when accent
+      changes (installed PWA's manifest theme_color is locked at install
+      time). cashew.html ships clean: one manifest link, theme-color,
+      apple-touch-icon, mobile-web-app-capable meta tags. vite build
+      green; manifest builder unit-tested for preset/custom/garbage paths.
+      ARCH/CODE DRIFT NOTED (not c014 scope): CLAUDE.md + this file's
+      next_step claim SPA serves at /frontend, but hooks.py and
+      www/cashew.html confirm /cashew/; c014 was wired to the actual
+      live route (/cashew/). Recommend bmad-fb-sync pass to reconcile.
+  - >
+      2026-05-25 c015-app-icon-family (bmad-fb-quick) - Icon family
+      replacement across all surfaces using open-source libraries (no
+      in-house design per user direction). Tabler chart-donut (filled,
+      MIT) shipped to favicon.svg + cashew-app-icon.svg + new
+      cashew-integration-logo.svg (the latter was a broken hook
+      reference pre-c015 - app_logo_url + add_to_apps_screen[0].logo
+      pointed at /assets/frappe/images/frappe-framework-logo.svg
+      placeholder; both now point at the real cashew logo). PWA
+      install PNGs regenerated from the new favicon (pwa-64/192/512,
+      maskable-512, apple-touch-180, favicon.ico). Workspace sidebar
+      icon: "upload" -> "chart-pie" (lucide name from Frappe's
+      bundled sprite - no fixture/sprite-include needed). vite build
+      green; bench --site work.local clear-cache; in-bench probe
+      verified manifest endpoint still 200 with four icon refs and
+      theme_color tracking live Cashew Settings.accent_color (Teal).
 
 next_step: >
   Dev phase COMPLETE — all 13 components shipped (2026-05-24 quick build

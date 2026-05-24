@@ -1,0 +1,21 @@
+{
+ "app": "cashew_integration",
+ "bg_color": "blue",
+ "creation": "2026-05-25 03:00:13.478843",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon_type": "App",
+ "idx": 99,
+ "label": "Cashew Integration",
+ "link": "/cashew",
+ "link_type": "External",
+ "logo_url": "/assets/cashew_integration/images/cashew-integration-logo.svg",
+ "modified": "2026-05-25 03:09:26.404336",
+ "modified_by": "Administrator",
+ "name": "Cashew Integration",
+ "owner": "Administrator",
+ "restrict_removal": 0,
+ "roles": [],
+ "standard": 1
+}

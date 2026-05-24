@@ -16,7 +16,7 @@ app_home = "/app/cashew-integration"
 add_to_apps_screen = [
 	{
 		"name": "cashew_integration",
-		"logo": "/assets/frappe/images/frappe-framework-logo.svg",
+		"logo": "/assets/cashew_integration/images/cashew-integration-logo.svg",
 		"title": "Cashew Integration",
 		"route": "/app/cashew-integration",
 	}
@@ -262,4 +262,13 @@ after_install = "cashew_integration.install.after_install"
 fixtures = []
 
 
-website_route_rules = [{'from_route': '/cashew/<path:app_path>', 'to_route': 'cashew'},]
+# PWA: /cashew/sw.js + /cashew/manifest.webmanifest take precedence over
+# the SPA catch-all. SW needs to live inside the SPA scope; manifest is
+# served dynamically so theme_color tracks Cashew Settings.accent_color.
+website_route_rules = [
+	{'from_route': '/cashew/sw.js', 'to_route': 'cashew_sw'},
+	{'from_route': '/cashew/manifest.webmanifest', 'to_route': 'cashew_manifest'},
+	{'from_route': '/cashew/<path:app_path>', 'to_route': 'cashew'},
+]
+
+page_renderer = ['cashew_integration.pwa.CashewPWAFile']

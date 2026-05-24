@@ -38,3 +38,14 @@ app.mount('#app');
 // c008 — open the Cashew Settings doc subscription for the SPA lifetime so
 // accent_color edits in another tab repaint this one (D14).
 subscribeSettings(() => {});
+
+// c014 — register PWA service worker. SW is served by Frappe at
+// /cashew/sw.js with Service-Worker-Allowed: /cashew/ so it can control
+// the whole SPA scope (required for install prompt — start_url is /cashew/).
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/cashew/sw.js', { scope: '/cashew/' })
+      .catch((err) => console.warn('[cashew] SW register failed', err));
+  });
+}

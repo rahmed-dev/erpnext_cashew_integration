@@ -9,6 +9,8 @@ import frappe
 from frappe import _
 from frappe.utils import get_first_day, get_system_timezone, getdate
 
+from cashew_integration.pwa import resolve_theme_color
+
 no_cache = 1
 
 
@@ -72,6 +74,11 @@ def get_boot():
 			"accent_color": settings.accent_color or "Indigo",
 			"accent_color_custom": settings.accent_color_custom or "",
 		},
+
+		# c014: server-rendered theme_color so the <meta name="theme-color">
+		# tag matches the user's accent on first paint (no Indigo flash
+		# before ThemeController.init runs).
+		"theme_color": resolve_theme_color(),
 
 		# Server-default period for dashboard (current month start → today)
 		"default_period_start": str(period_start),
