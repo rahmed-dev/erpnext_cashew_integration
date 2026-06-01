@@ -32,7 +32,6 @@ async function onFile(file) {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('is_private', '1');
-    fd.append('folder', 'Home/Cashew Imports');
     const res = await fetch('/api/method/upload_file', {
       method: 'POST',
       headers: { 'X-Frappe-CSRF-Token': window.boot?.csrf_token || window.csrf_token || '' },

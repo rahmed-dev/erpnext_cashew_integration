@@ -596,6 +596,155 @@ components:
       /cashew/). All three SVG files on disk, 784 bytes each.
 
 status_history:
+  - >
+      2026-06-02 quick (bmad-fb-quick) — PATCH: queued import showed no live
+      progress and completion never auto-updated (user had to refresh).
+      Root cause: the SPA tracks a run via realtime doc_update (useRunRealtime →
+      patchDoc), but the worker/api drove status + counters through
+      `db_set(notify=True)`, and Frappe's notify_update publishes a doc_update
+      whose payload is ONLY {modified, doctype, name} — no field values. So
+      patchDoc merged only `modified`; status/rows_posted stayed frozen at Queued
+      until a full frappe.client.get (refresh). Per-row events were already live
+      (_write_row_result → emit_row_update); only the PARENT run was stale.
+      Fix (server): new importer/realtime.py `emit_run_progress(run_name, fields)`
+      — publishes a doc_update carrying the actual changed fields. Wired at every
+      run-level transition: worker Processing/Completed/Failed/Cancelled +
+      _update_counters (every progress_interval=20 rows) + revert
+      Reverting/Reverted/Revert-Failed; api.py queue_run(Queued)/cancel_run/
+      revert_run. Fix (client polish): RunHeader shows an animated Loader2
+      "Working…/Reverting…" spinner while status ∈ {Queued,Processing,Reverting}
+      so small/fast imports (under one counter flush) still signal activity; the
+      status pill + posted counter now tick live for larger ones. Built + py
+      compiled. NOTE: RQ worker is a long-lived process — needs `bench restart`
+      (or worker restart) to load the new Python. f010 stays done.
+  - >
+      2026-06-02 quick (bmad-fb-quick) — TWO fixes. (1) Link dropdowns showed no
+      data: root cause was NOT server/build (search_link returns rows, code shipped)
+      but that LinkField never fetched until the FIRST KEYSTROKE — click = blank
+      list. Added fetch-on-focus: a `@focusin` wrapper on <Autocomplete> calls
+      search_link with empty txt to prime top-N every time the field is focused
+      (Desk Link parity); doctype-change watcher drops stale options so party
+      Customer→Supplier re-primes. (2) FX visibility: workbench rows showed only
+      base_amount (company currency, PKR). Rows already carry raw_amount +
+      source_currency (api _ROW_EXPLORER_FIELDS), so added a secondary
+      original-currency line (raw_amount + source_currency) in RowsTable, RowCard,
+      and the Fix modal detail — only when source_currency != company_currency.
+      Preview already did this. Lets the user ID a party by the USD/EUR figure.
+      Built + verified in bundle (focusin + source_currency present). f010 stays done.
+  - >
+      2026-06-02 quick (bmad-fb-quick) follow-up — Fix-modal dropdown STILL
+      rendered BEHIND the modal (user-reported). Prior "stacking is structurally
+      fine (z-100>z-50)" claim was WRONG: that measured reka Combobox.vue, but
+      Autocomplete actually renders its list through frappe-ui <Popover> →
+      reka PopoverPortal (teleports to body) → content class `.PopoverContent`,
+      which ships with NO z-index (Popover.vue only styles its transition). So a
+      THIRD overlay class existed that the z-scale never pinned: .dialog-overlay
+      had explicit z-50, .PopoverContent defaulted to auto → dialog painted over
+      it. FIX: index.css `.PopoverContent { z-index: 50 }`. Equal z to the dialog
+      is intentional — the popover portal mounts after the dialog opens, so DOM
+      order paints it on top while staying in the 50 overlay tier. Verified in
+      built CSS (.PopoverContent{z-index:50}). design-philosophy.md §2 updated:
+      THREE overlay portal classes, grep new overlays for their content class.
+      f010 stays done.
+  - >
+      2026-06-02 quick (bmad-fb-quick) — Fix-modal link pickers showed no
+      options + "External Account" unexplained. ROOT CAUSE: frappe-ui
+      <Autocomplete> does NOT self-fetch — it only client-filters the :options
+      array you pass; a `reference_doctype` prop on it is a silent no-op
+      (Autocomplete.vue line 280 filters `options` only). ValidationFixModal AND
+      InlinePartyEdit both passed :options="[]" + reference_doctype, so GL
+      Account / External Account / Party pickers were ALWAYS empty. This
+      contradicted CLAUDE.md SPA-discipline rule 2 (claimed Autocomplete+
+      reference_doctype routes through search_link). FIX: new shared
+      src/components/shared/LinkField.vue — wraps Autocomplete, debounces
+      @update:query → frappe.desk.search.search_link (honors get_query, same as
+      Desk Link), feeds :options. Now the canonical impl of rule 2; rewrote that
+      rule to match reality. Swapped LinkField into ValidationFixModal (account/
+      external/party) and InlinePartyEdit (party). Added field help text from the
+      REAL posting.py logic: GL Account = income/expense category leg (posting.py
+      :59,96); External Account = counterparty leg, External Transfer ONLY
+      (posting.py :248-256), blank otherwise. "Below the modal" symptom was the
+      empty popover, not stacking: Combobox portals to body (portalTo:'body'
+      default) at z-[100] > dialog z-50 — structurally above; populating options
+      resolves it. NOTE: live above-modal render NOT browser-verified this
+      session (no Playwright tool) — user to confirm on hard-refresh. Built. f010
+      stays done.
+  - >
+      2026-06-02 patch (bmad-fb-quick) — Design Philosophy + Fix-modal account
+      bug. (A) NEW doc .fb/system-arch/design-philosophy.md codifies: surfaces
+      are opaque via frappe-ui tokens (never hand-force white); the z-layer scale
+      (sticky header 10 · chrome 20-40 · overlays 50) — the recurring "bleed" bug
+      class; rounding scale; Button iconLeft/iconRight (never manual <Icon mr-1>);
+      prefer frappe-ui controls over native; accent via --cs-accent. (B) Root
+      cause of menu/modal "bleed" was STACKING, not transparency: tokens resolve
+      to #fff fine in built CSS; frappe-ui Dialog renders inline + Dropdown
+      portals to body, both with NO z-index, so sticky thead (z-10) + chrome
+      (z-30/40) painted over them. Fix: index.css .dropdown-content/.dialog-overlay
+      { z-index:50 }; removed the now-moot relative z-30 from WorkbenchToolbar
+      (it had been painting over the open modal); dropped the earlier redundant
+      force-white override. (C) FUNCTIONAL bug — Fix modal's GL Account / External
+      Account pickers wrote NOWHERE: save() only called set_party, and
+      row_explorer_revalidate (a partial reimpl) never re-checks account-missing,
+      so MAPPING_NOT_FOUND was unfixable in-product (no account-override surface
+      existed anywhere). NEW endpoint api.row_explorer_set_account: sets
+      resolved_account/external + re-runs the REAL validate_rows_at_queue_time
+      (same gate as posting) over the full row set, stamping Valid when the pick
+      resolves it / re-raising GROUP_ACCOUNT/INVALID_ACCOUNT_TYPE if not. (Caught
+      mid-test: queue-time validator only downgrades to Error, never stamps Valid
+      → had to promote empty status, mirroring revalidate.) Modal SHOW_BY_CODE
+      keys fixed to the real codes (were NO_ACCOUNT_MAP/MISSING_PARTY — never
+      matched, always fell back to all-fields); save() now persists account via
+      the new endpoint as the authoritative re-gate. DB-verified end-to-end on
+      live run 000008 row 9: MAPPING_NOT_FOUND → set account → Valid, then
+      restored (user data untouched). f010 stays done.
+  - >
+      2026-06-02 patch (bmad-fb-quick) — RowsWorkbench UX: clunky top bar +
+      buried Fix. TWO fixes. (1) WorkbenchToolbar de-stuffed: merged the two
+      separate Preset + Columns dropdowns into ONE "View" dropdown using
+      frappe-ui grouped options ([{group:'Layout',items},{group:'Columns',
+      items}]); search now flex-1 (was fixed w-72) so the row no longer
+      wraps/stuffs at medium widths; "Re-validate run" → "Re-validate". (2) Fix
+      action promoted to row level: a dedicated red "Fix" Button now renders in
+      the kebab cell (RowsTable) and at the bottom of each RowCard (mobile)
+      whenever editable && validation_status==='Error', emitting the same
+      row-action {action:'fix'}; removed "Fix this row…" from RowKebabMenu (kebab
+      keeps only secondary actions: Re-validate row / View JSON / Open posted).
+      Display/UX only — no API or validation change. Built clean. STILL PENDING
+      (deferred): Total Income/Expense totals on Preview. f010 stays done.
+  - >
+      2026-06-01 patch (bmad-fb-quick) — Validate did nothing for runs with row
+      errors + foreign amounts showed Rs 0.00. TWO fixes. (1) Multi-currency
+      Preview display: foreign rows showed Rs 0.00 because base_amount is only
+      resolved for non-Transfer foreign rows at parse (Transfers get implied
+      rate at posting). PreviewTable now shows the SOURCE figure (raw_amount +
+      source_currency) as primary, with converted company-currency value
+      beneath when known, else "value set at posting" (Transfer) / "rate
+      pending" — never a misleading Rs 0.00. PreviewSection passes real company
+      currency (run has no company_currency field → derive from rows). Display
+      only; posting/FX semantics untouched. (2) Validate transition (spec
+      run-workspace.md L20-21,49 + Decision 11): validate_import kept status
+      Parsed when row errors existed, but RowsWorkbench (the fix surface) only
+      renders + is editable at Validated → catch-22, errors invisible &
+      unfixable in SPA. Now Parsed->Validated transitions whenever there are no
+      run-level CONFIG blockers; row errors ride through (fixable in workbench;
+      queue_run re-gates RUN_BLOCKED_BY_ROW_ERRORS so posting stays safe). DB
+      run.status decoupled from payload `status` (still "validated"/"invalid")
+      so Desk _validate_import dialog stays accurate. SPA PreviewSection +
+      RowsWorkbench now toast the outcome (was silent — the literal "does
+      nothing"). Verified live: run 000007 (9 row errors, 0 config) → run_status
+      Validated, payload invalid. Two bench builds. STILL PENDING (deferred):
+      Total Income/Expense totals on Preview. f010 stays done.
+  - >
+      2026-06-01 patch (bmad-fb-quick) — SPA Preview "Discard" button did
+      nothing for a parsed import: Cashew Import Run.on_trash only allowed
+      deleting Draft/Reverted, so frappe.client.delete threw PermissionError
+      on a Parsed run (interceptor toasted, no redirect). Rewrote on_trash to
+      block only live-GL / in-flight statuses {Queued, Processing, Reverting,
+      Completed, Revert-Failed} and allow the rest (Draft/Parsed/Validated/
+      Failed/Cancelled/Reverted) — so discard-and-restart works pre-posting.
+      Used status (not rows_posted, a lifetime counter that stays set after
+      revert and wrongly blocked Reverted). Server-only; no rebuild. Verified
+      all 11 statuses via console (rolled back). f010 stays done.
   - 2026-05-24 arch-done (bmad-fb-architect) — 8 decisions recorded;
     f006 dep dropped; row-explorer relationship deferred to UI phase
   - >
@@ -822,6 +971,50 @@ status_history:
       green; bench --site work.local clear-cache; in-bench probe
       verified manifest endpoint still 200 with four icon refs and
       theme_color tracking live Cashew Settings.accent_color (Teal).
+  - >
+      2026-06-01 patch-csv-upload-folder (bmad-fb-quick) - Fixed import
+      upload crash: c006 UploadSection CsvDropzone.vue posted to core
+      upload_file with a hardcoded folder='Home/Cashew Imports' that was
+      never created, so File._validate_links() threw LinkValidationError
+      ("Could not find Folder: Home/Cashew Imports") on every CSV upload.
+      Removed the folder field; with none supplied upload_file uses
+      Frappe's standard Home folder (is_private=1 kept). No server change,
+      no install hook, no folder fixture - use the framework's own file
+      path. bench build --app cashew_integration green (30 precache
+      entries, sw.js regenerated). Feature stays done.
+  - >
+      2026-06-01 patch-upload-defaults (bmad-fb-quick) - Two import-form
+      bugs fixed in c006 UploadSection.
+      (1) Default Company never auto-selected: UploadSection read
+      settings.company / sysDefaults.company, but the boot dict (www/
+      cashew.py) exposes cashew_settings.default_company and
+      sysdefaults.default_company. Wrong key -> undefined -> null. Fixed
+      to read .default_company (matches ImportsList + FinanceDashboard,
+      which were already correct). Now Cashew Settings.company /
+      user-default Company prefills the new-import Company field.
+      (2) Advanced > Balance adjustment account showed no dropdown:
+      OptionalConfigDisclosure used frappe-ui <Autocomplete :options="[]"
+      reference_doctype/reference_fieldname> - Autocomplete is client-side
+      only and never fetches, and those aren't its props. Swapped to the
+      proven server-backed <Link doctype="Account"> (same component as
+      CompanyPicker, imported from frappe-ui/frappe) with
+      :filters="{ is_group: 0 }" so only postable leaf accounts show.
+      bench build green. Feature stays done.
+  - >
+      2026-06-01 patch-run-fetch-method (bmad-fb-quick) - Opening a run
+      after Parse crashed: "Couldn't load this run." c006 useRun.js
+      fetched the run via createResource url 'frappe.client.get_doc',
+      but that whitelisted method does NOT exist in Frappe (only
+      frappe.client.get / get_list / get_value / get_count) -> server
+      417 AttributeError "module 'frappe.client' has no attribute
+      'get_doc'". Fixed url to 'frappe.client.get' (same doctype/name
+      params; returns the run + import_rows child table in one call).
+      Also corrected the misleading CLAUDE.md D5 rule-1 wording that
+      listed frappe.client.get_doc as a read path (root of the mistake);
+      feature.yaml/c006-spec historical get_doc references left as-is.
+      bench build green. Feature stays done. (Note: ws://...:9001 socket
+      errors + sw.js no-response in the console were secondary - realtime
+      socket not running in dev + SW NetworkFirst fallback - not this bug.)
 
 next_step: >
   Dev phase COMPLETE — all 13 components shipped (2026-05-24 quick build

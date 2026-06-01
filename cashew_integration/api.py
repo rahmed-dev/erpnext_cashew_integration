@@ -32,7 +32,7 @@ from cashew_integration.importer.validation import (
     check_category_account_class,
 )
 from cashew_integration.importer.idempotency import apply_idempotency_guard
-from cashew_integration.importer.realtime import emit_row_update_batch
+from cashew_integration.importer.realtime import emit_row_update_batch, emit_run_progress
 from cashew_integration.importer.worker import enqueue_run, enqueue_revert
 
 
@@ -164,8 +164,12 @@ def validate_import(run_name: str) -> dict:
     """
     Run strict validation on imported rows.
 
-    - If all checks pass, status transitions Parsed -> Validated.
-    - If row/config errors exist, status remains Parsed and details are returned.
+    - Status transitions Parsed -> Validated as long as there are no run-level
+      config blockers; row-level errors are surfaced and fixed in the workbench
+      (which is editable only at 'Validated'). queue_run is the gate that blocks
+      posting while any row error remains.
+    - If run-level config errors exist, status stays Parsed (they can't be fixed
+      row-by-row). Details are returned either way.
     """
     run = frappe.get_doc("Cashew Import Run", run_name)
     frappe.has_permission("Cashew Import Run", doc=run, throw=True)
@@ -283,31 +287,29 @@ def validate_import(run_name: str) -> dict:
     run.db_set("rows_failed", failed_count, notify=True)
     run.db_set("rows_skipped", skipped_count, notify=True)
 
-    if failed_count == 0 and not run_config_errors:
-        run.db_set("status", "Validated", notify=True)
-        frappe.db.commit()
-        return {
-            "status": "validated",
-            "run_status": "Validated",
-            "rows_valid": valid_count,
-            "rows_failed": failed_count,
-            "error_code_counts": error_code_counts,
-            "fx_error_count": fx_error_count,
-            "fx_summary": fx_summary,
-            "run_config_errors": [],
-        }
-
-    run.db_set("status", "Parsed", notify=True)
+    # Row-level errors are resolved in the RowsWorkbench AFTER validation (the
+    # workbench is only editable at status 'Validated'), so they must NOT block
+    # the Parsed -> Validated transition. queue_run re-validates and refuses to
+    # post while any row has an error (RUN_BLOCKED_BY_ROW_ERRORS), so posting
+    # stays safe regardless. Only run-level config blockers — which can't be
+    # fixed row-by-row — hold the run in Parsed.
+    new_status = "Parsed" if run_config_errors else "Validated"
+    run.db_set("status", new_status, notify=True)
     frappe.db.commit()
+
+    # The payload `status` describes the validation OUTCOME (clean vs issues) and
+    # is independent of the status transition — Desk's _validate_import callback
+    # keys off it to pick the "Validation Passed" vs "Validation Issues" dialog.
+    payload_status = "validated" if (failed_count == 0 and not run_config_errors) else "invalid"
     return {
-        "status": "invalid",
-        "run_status": "Parsed",
+        "status": payload_status,
+        "run_status": new_status,
         "rows_valid": valid_count,
         "rows_failed": failed_count,
         "error_code_counts": error_code_counts,
         "fx_error_count": fx_error_count,
         "fx_summary": fx_summary,
-        "run_config_errors": run_config_errors,
+        "run_config_errors": run_config_errors if run_config_errors else [],
     }
 
 
@@ -384,6 +386,12 @@ def queue_run(run_name: str) -> dict:
     run.db_set("rows_skipped",   skipped_count, notify=True)
     run.db_set("rows_failed",    failed_count,  notify=True)
     frappe.db.commit()
+    emit_run_progress(run.name, {
+        "status":       "Queued",
+        "rows_valid":   valid_count,
+        "rows_skipped": skipped_count,
+        "rows_failed":  failed_count,
+    })
 
     return {"status": "queued", "job_id": job_id, "rows_valid": valid_count}
 
@@ -412,6 +420,7 @@ def revert_run(run_name: str) -> dict:
     job_id = enqueue_revert(run_name)
     run.db_set("status", "Reverting", notify=True)
     frappe.db.commit()
+    emit_run_progress(run.name, {"status": "Reverting"})
 
     return {"status": "reverting", "job_id": job_id}
 
@@ -436,6 +445,7 @@ def cancel_run(run_name: str) -> dict:
     run.db_set("status", "Cancelled", notify=True)
     run.db_set("finished_on", str(run.finished_on or now()), notify=True)
     frappe.db.commit()
+    emit_run_progress(run.name, {"status": "Cancelled", "finished_on": str(run.finished_on)})
     return {"status": "cancelled", "run_status": "Cancelled"}
 
 
@@ -628,6 +638,88 @@ def row_explorer_set_party(
     run.save(ignore_permissions=False)
     frappe.db.commit()
     emit_row_update_batch(run.name, [_row_patch(r) for r in updated])
+    return {"updated": updated}
+
+
+@frappe.whitelist()
+def row_explorer_set_account(
+    run_name: str,
+    row_indices,
+    account: str = None,
+    external_account: str = None,
+) -> dict:
+    """Set ``resolved_account`` / ``resolved_external_account`` overrides on the
+    given rows, then re-run the REAL queue-time validator over the full row set
+    so the same rules that gate posting decide pass/fail.
+
+    This is what makes the workbench "Fix" modal's account pickers actually take
+    effect: it clears MAPPING_NOT_FOUND (account-missing), GROUP_ACCOUNT and
+    INVALID_ACCOUNT_TYPE when the override resolves them — and re-raises them if
+    it does not. ``account`` / ``external_account`` left ``None`` are unchanged;
+    the revalidation still runs, so this doubles as an authoritative re-gate.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", ptype="write", doc=run, throw=True)
+
+    if run.status not in _ROW_EXPLORER_MUTATION_ALLOWED_STATUSES:
+        frappe.throw(_("Cannot edit rows when run status is {0}.").format(run.status))
+
+    parsed = _coerce_row_indices(row_indices) or []
+    target = set(parsed)
+    if not target:
+        frappe.throw(_("row_indices must not be empty."))
+    if account and not frappe.db.exists("Account", account):
+        frappe.throw(_("Account '{0}' does not exist.").format(account))
+    if external_account and not frappe.db.exists("Account", external_account):
+        frappe.throw(_("Account '{0}' does not exist.").format(external_account))
+
+    # 1. Apply the overrides on the editable target rows.
+    for r in run.import_rows:
+        if r.row_idx not in target:
+            continue
+        if r.posted_docname or r.revert_status == "Reverted":
+            continue  # posted / reverted rows are read-only
+        if account is not None:
+            r.resolved_account = account
+        if external_account is not None:
+            r.resolved_external_account = external_account
+
+    # 2. Re-run the authoritative queue-time validator over the WHOLE row set
+    #    (transfer-pair propagation needs every leg). Reset only the target rows
+    #    so they are re-evaluated; rows already in Error are otherwise preserved
+    #    by validate_rows_at_queue_time.
+    dicts = []
+    target_dicts = {}
+    for r in run.import_rows:
+        d = _child_to_dict(r)
+        if r.row_idx in target and not r.posted_docname:
+            d["validation_status"] = ""
+            d["validation_error_code"] = None
+            d["validation_error_message"] = None
+            target_dicts[r.row_idx] = d
+        dicts.append(d)
+    validate_rows_at_queue_time(dicts)
+
+    # 3. Write back the validation outcome for the target rows. The queue-time
+    #    validator only *downgrades* to Error on failure; it never stamps Valid,
+    #    so a row that cleared all rules comes back with an empty status — promote
+    #    it to Valid (mirrors row_explorer_revalidate).
+    updated = []
+    for r in run.import_rows:
+        if r.row_idx not in target_dicts:
+            continue
+        d = target_dicts[r.row_idx]
+        if not d.get("validation_status"):
+            d["validation_status"] = "Valid"
+        for k in ("validation_status", "validation_error_code", "validation_error_message"):
+            r.set(k, d.get(k))
+        updated.append({f: r.get(f) for f in _ROW_EXPLORER_FIELDS})
+
+    run.save(ignore_permissions=False)
+    frappe.db.commit()
+    emit_row_update_batch(
+        run.name, [_row_patch(r) for r in run.import_rows if r.row_idx in target_dicts]
+    )
     return {"updated": updated}
 
 

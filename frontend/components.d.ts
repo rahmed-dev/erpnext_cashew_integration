@@ -44,6 +44,7 @@ declare module 'vue' {
     InlinePartyEdit: typeof import('./src/components/run-workspace/workbench/InlinePartyEdit.vue')['default']
     InlineRowDrawer: typeof import('./src/components/run-workspace/workbench/InlineRowDrawer.vue')['default']
     KebabMenu: typeof import('./src/components/shared/KebabMenu.vue')['default']
+    LinkField: typeof import('./src/components/shared/LinkField.vue')['default']
     MappingsSection: typeof import('./src/components/settings/MappingsSection.vue')['default']
     MobileBottomNav: typeof import('./src/components/Shell/MobileBottomNav.vue')['default']
     MobileTopBar: typeof import('./src/components/Shell/MobileTopBar.vue')['default']

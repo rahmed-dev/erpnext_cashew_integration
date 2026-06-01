@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue';
+import { Button } from 'frappe-ui';
 import { COLUMN_DEFS, colDef } from './registries/columns';
 
 import StatusPill from '@/components/shared/StatusPill.vue';
@@ -78,7 +79,7 @@ function onHeaderSelectAll() {
             @click="header(cid)?.sortable && toggleSort(header(cid))"
           >
             <template v-if="header(cid)?.renderer === 'select-checkbox'">
-              <input type="checkbox" :checked="allSelected" @change="onHeaderSelectAll" />
+              <input type="checkbox" class="rounded border-gray-300 text-[var(--cs-accent)] focus:ring-[var(--cs-accent)]" :checked="allSelected" @change="onHeaderSelectAll" />
             </template>
             <template v-else>
               <span class="inline-flex items-center gap-1">
@@ -109,6 +110,7 @@ function onHeaderSelectAll() {
             <template v-if="header(cid).renderer === 'select-checkbox'">
               <input
                 type="checkbox"
+                class="rounded border-gray-300 text-[var(--cs-accent)] focus:ring-[var(--cs-accent)]"
                 :checked="selected.has(row.row_idx)"
                 @change="emit('select-toggle', row.row_idx)"
                 @click.stop
@@ -126,6 +128,13 @@ function onHeaderSelectAll() {
             </template>
             <template v-else-if="header(cid).renderer === 'amount-signed'">
               <AmountDisplay :amount="row.base_amount" :currency="row.company_currency || 'PKR'" :signed="true" />
+              <div
+                v-if="row.source_currency && row.source_currency !== (row.company_currency || 'PKR')"
+                class="text-xs text-gray-500"
+                :title="`Original amount in ${row.source_currency}`"
+              >
+                <AmountDisplay :amount="row.raw_amount" :currency="row.source_currency" />
+              </div>
             </template>
             <template v-else-if="header(cid).renderer === 'category-with-sub'">
               <div class="text-sm">{{ row.category || '—' }}</div>
@@ -163,7 +172,16 @@ function onHeaderSelectAll() {
               ]" :title="row.revert_error">{{ row.revert_status }}</span>
             </template>
             <template v-else-if="header(cid).renderer === 'row-kebab'">
-              <RowKebabMenu :row="row" :editable="editable" @action="(p) => emit('row-action', p)" />
+              <div class="flex items-center justify-end gap-1">
+                <Button
+                  v-if="editable && row.validation_status === 'Error'"
+                  variant="subtle"
+                  theme="red"
+                  size="sm"
+                  @click.stop="emit('row-action', { action: 'fix', row })"
+                >Fix</Button>
+                <RowKebabMenu :row="row" :editable="editable" @action="(p) => emit('row-action', p)" />
+              </div>
             </template>
             <template v-else>
               <span :class="header(cid).tabular ? 'tabular-nums' : ''">{{ row[header(cid).field] ?? '—' }}</span>

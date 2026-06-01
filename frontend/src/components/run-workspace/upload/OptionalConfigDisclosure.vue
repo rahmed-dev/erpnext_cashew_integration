@@ -1,6 +1,7 @@
 <script setup>
-import { ref } from 'vue';
-import { Autocomplete, Input } from 'frappe-ui';
+import { ref, computed } from 'vue';
+import { Input } from 'frappe-ui';
+import { Link } from 'frappe-ui/frappe';
 import { ChevronDown, ChevronRight } from 'lucide-vue-next';
 
 const props = defineProps({
@@ -12,9 +13,11 @@ const emit = defineEmits(['update:balanceAdjustmentAccount', 'update:jeRoundingT
 
 const open = ref(false);
 
-function onAccount(opt) {
-  emit('update:balanceAdjustmentAccount', opt?.value ?? opt?.name ?? null);
-}
+const account = computed({
+  get: () => props.balanceAdjustmentAccount || '',
+  set: (v) => emit('update:balanceAdjustmentAccount', v || null),
+});
+
 function onTolerance(v) {
   emit('update:jeRoundingTolerance', v);
 }
@@ -33,14 +36,12 @@ function onTolerance(v) {
     <div v-if="open" class="px-3 pb-3 space-y-3 border-t border-gray-100 pt-3">
       <div>
         <label class="text-xs font-medium text-gray-700 block mb-1">Balance adjustment account</label>
-        <Autocomplete
-          :modelValue="balanceAdjustmentAccount"
-          :options="[]"
+        <Link
+          v-model="account"
+          doctype="Account"
+          :filters="{ is_group: 0 }"
           :disabled="disabled"
           placeholder="Optional"
-          reference_doctype="Cashew Import Run"
-          reference_fieldname="balance_adjustment_account"
-          @update:modelValue="onAccount"
         />
       </div>
       <div>

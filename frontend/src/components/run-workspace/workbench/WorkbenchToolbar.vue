@@ -18,7 +18,7 @@ const emit = defineEmits(['update:search', 'update:filters', 'update:preset', 'u
 const filtersOpen = ref(false);
 
 const presetOptions = computed(() => Object.keys(COLUMN_PRESETS).map((id) => ({
-  label: id,
+  label: `${props.preset === id ? '✓ ' : '   '}${id}`,
   onClick: () => emit('update:preset', id),
 })));
 
@@ -32,6 +32,12 @@ const colToggleOptions = computed(() => COLUMN_DEFS
       emit('update:visibleColumns', Array.from(set));
     },
   })));
+
+// One "View" menu groups layout presets + column toggles (was two dropdowns).
+const viewOptions = computed(() => [
+  { group: 'Layout', items: presetOptions.value },
+  { group: 'Columns', items: colToggleOptions.value },
+]);
 
 function setFacet(facetId, value) {
   const next = { ...props.filters };
@@ -65,41 +71,28 @@ function setTriState(facet, option) {
 
 <template>
   <div class="flex flex-wrap items-center gap-2">
-    <div class="relative w-full md:w-72">
+    <div class="relative w-full sm:w-64">
       <Search :size="14" class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
       <Input
         type="text"
         :modelValue="search"
         placeholder="Search rows"
-        class="pl-7"
+        class="pl-7 w-full"
         @update:modelValue="(v) => emit('update:search', v)"
       />
     </div>
 
-    <Dropdown :options="presetOptions">
-      <template #default>
-        <Button variant="outline">
-          <Columns :size="14" class="mr-1" />
-          {{ preset }}
-          <ChevronDown :size="14" class="ml-1" />
-        </Button>
-      </template>
-    </Dropdown>
-
-    <Dropdown :options="colToggleOptions">
-      <template #default>
-        <Button variant="outline">Columns ({{ visibleColumns.length }})</Button>
-      </template>
-    </Dropdown>
-
-    <Button variant="outline" @click="filtersOpen = !filtersOpen">
-      <Filter :size="14" class="mr-1" />
-      Filters
-    </Button>
-
     <span class="flex-1" />
 
-    <Button v-if="editable" variant="solid" theme="gray" @click="emit('validate')">Re-validate run</Button>
+    <Dropdown :options="viewOptions">
+      <template #default>
+        <Button variant="outline" :icon-left="Columns" :icon-right="ChevronDown">View</Button>
+      </template>
+    </Dropdown>
+
+    <Button variant="outline" :icon-left="Filter" @click="filtersOpen = !filtersOpen">Filters</Button>
+
+    <Button v-if="editable" variant="solid" theme="gray" @click="emit('validate')">Re-validate</Button>
   </div>
 
   <div v-if="filtersOpen" class="mt-3 rounded-lg border border-gray-200 bg-white p-3 grid grid-cols-1 sm:grid-cols-2 gap-3">

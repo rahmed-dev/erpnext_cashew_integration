@@ -11,11 +11,15 @@
  "link": "/cashew",
  "link_type": "External",
  "logo_url": "/assets/cashew_integration/images/cashew-integration-logo.svg",
- "modified": "2026-05-25 03:09:26.404336",
+ "modified": "2026-06-01 09:56:15.860344",
  "modified_by": "Administrator",
  "name": "Cashew Integration",
  "owner": "Administrator",
  "restrict_removal": 0,
- "roles": [],
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
  "standard": 1
 }

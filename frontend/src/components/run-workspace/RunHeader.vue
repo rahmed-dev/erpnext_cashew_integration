@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { Button, toast, frappeRequest } from 'frappe-ui';
-import { ChevronLeft, ExternalLink, Radio } from 'lucide-vue-next';
+import { ChevronLeft, ExternalLink, Radio, Loader2 } from 'lucide-vue-next';
 
 import StatusPill from '@/components/shared/StatusPill.vue';
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
@@ -22,6 +22,7 @@ const busy = ref(null);
 const confirmState = ref(null);
 
 const status = computed(() => props.doc?.status || (props.runName ? null : 'Draft'));
+const inFlight = computed(() => ['Queued', 'Processing', 'Reverting'].includes(status.value));
 const periodFmt = computed(() => formatRange(props.doc?.period_start, props.doc?.period_end));
 
 const RUN_ACTIONS = {
@@ -120,6 +121,14 @@ function openInDesk() {
         {{ runName || '(new import)' }}
       </span>
       <StatusPill v-if="status" kind="run-status" :value="status" />
+      <span
+        v-if="inFlight"
+        class="inline-flex items-center gap-1 text-[11px] text-gray-600"
+        :title="status === 'Reverting' ? 'Reverting…' : 'Import in progress'"
+      >
+        <Loader2 :size="12" class="animate-spin" />
+        <span>{{ status === 'Reverting' ? 'Reverting…' : 'Working…' }}</span>
+      </span>
       <span
         v-if="realtimeStatus === 'connected'"
         class="inline-flex items-center gap-1 text-[11px] text-green-700"

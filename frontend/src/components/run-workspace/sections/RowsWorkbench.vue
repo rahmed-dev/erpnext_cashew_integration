@@ -141,11 +141,17 @@ async function onBulkAction(action) {
 
 async function validateRun() {
   try {
-    await frappeRequest({
+    const m = await frappeRequest({
       url: 'cashew_integration.api.validate_import',
       method: 'POST',
       params: { run_name: props.runName },
-    });
+    }) || {};
+    const failed = m.rows_failed || 0;
+    if (failed > 0) {
+      toast.warning(`${failed} row${failed === 1 ? '' : 's'} still need fixing.`);
+    } else {
+      toast.success('All rows valid. Ready to queue.');
+    }
     emit('reload');
   } catch (_e) { /* interceptor toasted */ }
 }

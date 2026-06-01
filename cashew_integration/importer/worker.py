@@ -29,7 +29,7 @@ from frappe.utils import now
 from cashew_integration.importer.errors import set_row_validation_error
 from cashew_integration.importer.idempotency import apply_idempotency_guard
 from cashew_integration.importer.posting import post_row, post_transfer_pair
-from cashew_integration.importer.realtime import emit_row_update
+from cashew_integration.importer.realtime import emit_row_update, emit_run_progress
 from cashew_integration.importer.validation import validate_rows_at_queue_time, validate_run_config
 from cashew_integration.importer.diagnostics import generate_diagnostics_csv
 
@@ -77,6 +77,7 @@ def process_run(run_name: str) -> None:
         run.db_set("status",      "Failed",  notify=True)
         run.db_set("finished_on", now(),     notify=True)
         frappe.db.commit()
+        emit_run_progress(run_name, {"status": "Failed", "finished_on": str(run.finished_on)})
         raise
 
 
@@ -93,6 +94,7 @@ def _process(run_name: str) -> None:
     run.db_set("status",     "Processing", notify=True)
     run.db_set("started_on", now(),        notify=True)
     frappe.db.commit()
+    emit_run_progress(run_name, {"status": "Processing", "started_on": str(run.started_on)})
 
     # Reload rows from child table
     rows = [_row_to_dict(r) for r in run.import_rows]
@@ -119,6 +121,7 @@ def _process(run_name: str) -> None:
             _update_counters(run, posted, failed, skipped)
             run.db_set("finished_on", now(), notify=True)
             frappe.db.commit()
+            emit_run_progress(run_name, {"status": "Cancelled", "finished_on": str(run.finished_on)})
             return
 
         status = row.get("validation_status")
@@ -214,6 +217,13 @@ def _process(run_name: str) -> None:
     run.db_set("status",      final_status, notify=True)
     run.db_set("finished_on", now(),        notify=True)
     frappe.db.commit()
+    emit_run_progress(run_name, {
+        "status":       final_status,
+        "rows_posted":  posted,
+        "rows_failed":  failed,
+        "rows_skipped": skipped,
+        "finished_on":  str(run.finished_on),
+    })
 
 
 # ── revert: enqueue helper ────────────────────────────────────────────────────
@@ -247,6 +257,7 @@ def process_revert(run_name: str) -> None:
         run.db_set("status",      "Revert-Failed", notify=True)
         run.db_set("finished_on", now(),            notify=True)
         frappe.db.commit()
+        emit_run_progress(run_name, {"status": "Revert-Failed", "finished_on": str(run.finished_on)})
         raise
 
 
@@ -338,6 +349,7 @@ def _revert(run_name: str) -> None:
     run.db_set("status",      final_status, notify=True)
     run.db_set("finished_on", now(),        notify=True)
     frappe.db.commit()
+    emit_run_progress(run_name, {"status": final_status, "finished_on": str(run.finished_on)})
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -394,6 +406,11 @@ def _update_counters(run, posted: int, failed: int, skipped: int) -> None:
     run.db_set("rows_posted",  posted,  notify=True)
     run.db_set("rows_failed",  failed,  notify=True)
     run.db_set("rows_skipped", skipped, notify=True)
+    emit_run_progress(run.name, {
+        "rows_posted":  posted,
+        "rows_failed":  failed,
+        "rows_skipped": skipped,
+    })
 
 
 def _mark_row_error(row: dict, message: str) -> None:

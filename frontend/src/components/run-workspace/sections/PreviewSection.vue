@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { Button, toast, frappeRequest } from 'frappe-ui';
 import ParseStatsBar from '@/components/run-workspace/preview/ParseStatsBar.vue';
 import PreviewTable from '@/components/run-workspace/preview/PreviewTable.vue';
@@ -16,6 +16,12 @@ const emit = defineEmits(['reload']);
 const busy = ref(null);
 const confirmState = ref(null);
 
+// Cashew Import Run has no company_currency field; rows carry it (all rows in a
+// run share one company currency). Fall back to PKR only if rows are empty.
+const companyCurrency = computed(
+  () => props.doc?.company_currency || props.rows?.[0]?.company_currency || 'PKR',
+);
+
 async function call(method) {
   busy.value = method;
   try {
@@ -30,7 +36,28 @@ async function call(method) {
 }
 
 async function onReparse() { call('parse_and_preview'); }
-async function onValidate() { call('validate_import'); }
+
+async function onValidate() {
+  busy.value = 'validate_import';
+  try {
+    const m = await frappeRequest({
+      url: 'cashew_integration.api.validate_import',
+      method: 'POST',
+      params: { run_name: props.runName },
+    }) || {};
+    const cfg = m.run_config_errors || [];
+    const failed = m.rows_failed || 0;
+    if (m.run_status === 'Validated' && failed > 0) {
+      toast.warning(`${failed} row${failed === 1 ? '' : 's'} need fixing — resolve them below, then Queue.`);
+    } else if (m.run_status === 'Validated') {
+      toast.success(`All ${m.rows_valid} rows valid. Ready to queue.`);
+    } else if (cfg.length) {
+      toast.error(`Fix ${cfg.length} setup issue${cfg.length === 1 ? '' : 's'} before validating.`);
+    }
+    emit('reload');
+  } catch (_e) { /* interceptor toasted */ }
+  finally { busy.value = null; }
+}
 
 async function onDiscard() {
   const ok = await new Promise((resolve) => {
@@ -60,7 +87,7 @@ function resolveConfirm(answer) {
 <template>
   <div class="space-y-4">
     <ParseStatsBar :doc="doc" :rows="rows" />
-    <PreviewTable :rows="rows" :currency="doc?.company_currency || 'PKR'" />
+    <PreviewTable :rows="rows" :currency="companyCurrency" />
     <div class="flex flex-wrap items-center justify-end gap-2">
       <Button variant="ghost" :loading="busy === 'parse_and_preview'" :disabled="!!busy" @click="onReparse">Re-parse</Button>
       <Button variant="ghost" theme="red" :loading="busy === 'discard'" :disabled="!!busy" @click="onDiscard">Discard</Button>

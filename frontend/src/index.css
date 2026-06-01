@@ -24,3 +24,17 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-once { animation: none; }
 }
+
+/* Z-LAYER SCALE (see .fb/system-arch/design-philosophy.md).
+   frappe-ui surfaces are opaque via design tokens — never force a background.
+   The recurring bug is STACKING: these overlays render inline / teleport to body
+   with no z-index, so they lose to the sticky table header (z-10) and app chrome
+   (z-20/30/40) and the page appears to "bleed" through them. Lift them above all
+   chrome. App chrome must stay ≤ 40; overlays own 50. */
+.dropdown-content { z-index: 50; } /* frappe-ui Dropdown menu (portaled to body) */
+.dialog-overlay   { z-index: 50; } /* frappe-ui Dialog overlay + panel */
+.PopoverContent   { z-index: 50; } /* frappe-ui Popover/Autocomplete (reka portal,
+   ships with NO z-index of its own). Without this it loses to .dialog-overlay's
+   explicit z-50 and an Autocomplete OPENED INSIDE a Dialog renders BEHIND the
+   modal. Equal z to the dialog is intentional: the popover portal mounts after
+   the dialog opens, so DOM order paints it on top while staying in the 50 tier. */

@@ -11,9 +11,8 @@ const emit = defineEmits(['action']);
 
 const options = computed(() => {
   const items = [];
-  if (props.row.validation_status === 'Error' && props.editable) {
-    items.push({ label: 'Fix this row…', onClick: () => emit('action', { action: 'fix', row: props.row }) });
-  }
+  // "Fix" is surfaced as a dedicated row-level button (RowsTable / RowCard); the
+  // kebab keeps only secondary actions.
   if (props.editable) {
     items.push({ label: 'Re-validate row', onClick: () => emit('action', { action: 'revalidate', row: props.row }) });
   }

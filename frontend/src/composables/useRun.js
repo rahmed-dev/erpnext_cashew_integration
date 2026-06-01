@@ -1,4 +1,4 @@
-// f010 c006 — reactive Cashew Import Run + rows fetch via frappe.client.get_doc.
+// f010 c006 — reactive Cashew Import Run + rows fetch via frappe.client.get.
 import { ref } from 'vue';
 import { createResource } from 'frappe-ui';
 
@@ -9,7 +9,7 @@ export function useRun(runName) {
   const error = ref(null);
 
   const resource = createResource({
-    url: 'frappe.client.get_doc',
+    url: 'frappe.client.get',
     cache: false,
     makeParams: () => ({
       doctype: 'Cashew Import Run',

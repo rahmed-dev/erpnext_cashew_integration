@@ -1,7 +1,8 @@
 <script setup>
 import { reactive, ref, computed, watch } from 'vue';
-import { Dialog, Button, Autocomplete, frappeRequest } from 'frappe-ui';
+import { Dialog, Button, frappeRequest } from 'frappe-ui';
 import AmountDisplay from '@/components/shared/AmountDisplay.vue';
+import LinkField from '@/components/shared/LinkField.vue';
 
 const props = defineProps({
   row: { type: [Object, null], default: null },
@@ -10,10 +11,14 @@ const props = defineProps({
 });
 const emit = defineEmits(['update:open', 'saved']);
 
+// Keyed on the REAL validation error codes emitted by importer/validation.py.
 const SHOW_BY_CODE = {
-  NO_ACCOUNT_MAP:   { account: true },
-  NO_EXTERNAL_ACCT: { external: true },
-  MISSING_PARTY:    { party: true },
+  MAPPING_NOT_FOUND:               { account: true, external: true },
+  GROUP_ACCOUNT:                   { account: true, external: true },
+  INVALID_ACCOUNT_TYPE:            { account: true },
+  CATEGORY_ACCOUNT_CLASS_MISMATCH: { account: true },
+  PARTY_MISSING:                   { party: true },
+  LOAN_PARTY_MISSING:              { party: true },
 };
 
 const flags = computed(() => SHOW_BY_CODE[props.row?.validation_error_code]
@@ -38,35 +43,37 @@ function close() { emit('update:open', false); }
 async function save() {
   if (!props.row || saving.value) return;
   saving.value = true;
+  const idx = [props.row.row_idx];
   try {
-    const writes = [];
-    if (flags.value.party) {
-      writes.push(frappeRequest({
+    // 1. Party first (own existence check + party-presence revalidation).
+    if (flags.value.party && form.party_type && form.party) {
+      await frappeRequest({
         url: 'cashew_integration.api.row_explorer_set_party',
         method: 'POST',
         params: {
-          run_name: props.runName,
-          row_indices: [props.row.row_idx],
-          party_type: form.party_type || null,
-          party: form.party || null,
+          run_name: props.runName, row_indices: idx,
+          party_type: form.party_type, party: form.party,
         },
-      }));
+      });
     }
-    if (writes.length) await Promise.all(writes);
+    // 2. Account / external override → runs the AUTHORITATIVE queue-time
+    //    validator (clears MAPPING_NOT_FOUND etc. only if the pick resolves it).
+    //    Always called: it doubles as the final re-gate. Passing null leaves a
+    //    field unchanged.
     await frappeRequest({
-      url: 'cashew_integration.api.row_explorer_revalidate',
+      url: 'cashew_integration.api.row_explorer_set_account',
       method: 'POST',
-      params: { run_name: props.runName, row_indices: [props.row.row_idx] },
+      params: {
+        run_name: props.runName, row_indices: idx,
+        account: form.account || null,
+        external_account: form.external_account || null,
+      },
     });
     emit('saved');
     close();
   } catch (_e) { /* interceptor toasted */ }
   finally { saving.value = false; }
 }
-
-function onPartySelect(opt) { form.party = opt?.value ?? opt?.name ?? ''; }
-function onAccountSelect(opt) { form.account = opt?.value ?? opt?.name ?? ''; }
-function onExtSelect(opt) { form.external_account = opt?.value ?? opt?.name ?? ''; }
 </script>
 
 <template>
@@ -85,30 +92,40 @@ function onExtSelect(opt) { form.external_account = opt?.value ?? opt?.name ?? '
           <dt class="text-gray-500">Account</dt><dd>{{ row.raw_account || '—' }}</dd>
           <dt class="text-gray-500">Amount</dt>
           <dd><AmountDisplay :amount="row.base_amount" :currency="row.company_currency || 'PKR'" :signed="true" /></dd>
+          <template v-if="row.source_currency && row.source_currency !== (row.company_currency || 'PKR')">
+            <dt class="text-gray-500">Original</dt>
+            <dd><AmountDisplay :amount="row.raw_amount" :currency="row.source_currency" /></dd>
+          </template>
           <dt class="text-gray-500">Type</dt><dd>{{ row.txn_type || '—' }}</dd>
           <dt class="text-gray-500">Category</dt><dd>{{ row.category || '—' }}</dd>
         </dl>
 
         <div v-if="flags.account">
           <label class="text-xs font-medium text-gray-700 block mb-1">GL Account</label>
-          <Autocomplete
+          <LinkField
             :modelValue="form.account"
-            :options="[]"
-            reference_doctype="Account"
-            placeholder="Account"
-            @update:modelValue="onAccountSelect"
+            doctype="Account"
+            placeholder="Search account"
+            @update:modelValue="(v) => (form.account = v)"
           />
+          <p class="text-xs text-gray-500 mt-1">
+            The income/expense ledger this row posts to — the accounting side of the
+            entry, balanced against your bank/cash account.
+          </p>
         </div>
 
         <div v-if="flags.external">
           <label class="text-xs font-medium text-gray-700 block mb-1">External Account</label>
-          <Autocomplete
+          <LinkField
             :modelValue="form.external_account"
-            :options="[]"
-            reference_doctype="Account"
-            placeholder="External Account"
-            @update:modelValue="onExtSelect"
+            doctype="Account"
+            placeholder="Search account"
+            @update:modelValue="(v) => (form.external_account = v)"
           />
+          <p class="text-xs text-gray-500 mt-1">
+            Only for external transfers: the outside account the money moved to or
+            from (the counterparty leg). Leave blank for normal income/expense rows.
+          </p>
         </div>
 
         <div v-if="flags.party">
@@ -119,13 +136,13 @@ function onExtSelect(opt) { form.external_account = opt?.value ?? opt?.name ?? '
               <option value="Customer">Customer</option>
               <option value="Supplier">Supplier</option>
             </select>
-            <Autocomplete
+            <LinkField
               v-if="form.party_type"
               :modelValue="form.party"
-              :options="[]"
-              :reference_doctype="form.party_type"
+              :doctype="form.party_type"
               class="flex-1"
-              @update:modelValue="onPartySelect"
+              placeholder="Search party"
+              @update:modelValue="(v) => (form.party = v)"
             />
           </div>
         </div>

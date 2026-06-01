@@ -18,7 +18,7 @@ const settings = useCashewSettings();
 const sysDefaults = useSysDefaults();
 
 const form = reactive({
-  company: props.doc?.company || settings.company || sysDefaults.company || null,
+  company: props.doc?.company || settings.default_company || sysDefaults.default_company || null,
   source_file: props.doc?.source_file || null,
   balance_adjustment_account: props.doc?.balance_adjustment_account || null,
   je_rounding_tolerance: props.doc?.je_rounding_tolerance ?? 0.01,

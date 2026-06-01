@@ -16,6 +16,12 @@ const pageRows = computed(() => props.rows.slice(page.value * PAGE_SIZE, (page.v
 
 function prev() { if (page.value > 0) page.value -= 1; }
 function next() { if (page.value < totalPages.value - 1) page.value += 1; }
+
+// A row is foreign when its source currency differs from the company currency.
+function isForeign(r) {
+  return !!r.source_currency && r.source_currency !== props.currency;
+}
+
 </script>
 
 <template>
@@ -38,7 +44,20 @@ function next() { if (page.value < totalPages.value - 1) page.value += 1; }
           <td class="px-3 py-1.5">{{ r.txn_date || '—' }}</td>
           <td class="px-3 py-1.5 truncate max-w-[14ch]" :title="r.raw_account">{{ r.raw_account || '—' }}</td>
           <td class="px-3 py-1.5 text-right">
-            <AmountDisplay :amount="r.base_amount" :currency="currency" :signed="true" />
+            <!-- Primary: the original figure in its own currency (PKR rows = company currency). -->
+            <AmountDisplay :amount="r.raw_amount" :currency="r.source_currency || currency" :signed="true" />
+            <!-- Foreign rows: show the company-currency value beneath, or why it isn't known yet. -->
+            <div v-if="isForeign(r)" class="text-xs text-gray-500 mt-0.5">
+              <template v-if="r.base_amount">
+                ≈ <AmountDisplay :amount="r.base_amount" :currency="currency" />
+              </template>
+              <template v-else-if="r.txn_type === 'Transfer'">
+                {{ currency }} value set at posting
+              </template>
+              <template v-else>
+                {{ currency }} rate pending
+              </template>
+            </div>
           </td>
           <td class="px-3 py-1.5">
             <StatusPill v-if="r.txn_type" kind="txn-type" :value="r.txn_type" />

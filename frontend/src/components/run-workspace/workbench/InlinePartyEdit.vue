@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, nextTick } from 'vue';
-import { Autocomplete, Spinner, frappeRequest, toast } from 'frappe-ui';
+import { Spinner, frappeRequest, toast } from 'frappe-ui';
+import LinkField from '@/components/shared/LinkField.vue';
 
 const props = defineProps({
   row: { type: Object, required: true },
@@ -47,10 +48,6 @@ async function save() {
   } catch (_e) { /* interceptor toasted */ }
   finally { saving.value = false; }
 }
-
-function onPartySelect(opt) {
-  local.party = opt?.value ?? opt?.name ?? '';
-}
 </script>
 
 <template>
@@ -74,13 +71,13 @@ function onPartySelect(opt) {
       <option value="Customer">Customer</option>
       <option value="Supplier">Supplier</option>
     </select>
-    <Autocomplete
+    <LinkField
       v-if="local.party_type"
       :modelValue="local.party"
-      :options="[]"
-      :reference_doctype="local.party_type"
+      :doctype="local.party_type"
       class="text-xs flex-1 min-w-0"
-      @update:modelValue="onPartySelect"
+      placeholder="Search party"
+      @update:modelValue="(v) => (local.party = v)"
       @keydown.enter.prevent="save"
       @keydown.esc.prevent="cancel"
     />

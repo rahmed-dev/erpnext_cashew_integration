@@ -44,3 +44,29 @@ def emit_row_update_batch(run_name: str, row_patches: list[dict]) -> None:
         doctype="Cashew Import Run",
         docname=run_name,
     )
+
+
+def emit_run_progress(run_name: str, fields: dict) -> None:
+    """Publish a parent-run `doc_update` carrying changed run-level fields.
+
+    Frappe's own `notify_update` (fired by `db_set(notify=True)`) publishes a
+    `doc_update` whose payload is only `{modified, doctype, name}` — it does NOT
+    carry the changed field values.  So the SPA's `patchDoc(event)` learns only
+    `modified` and the displayed status / counters stay frozen at "Queued" until
+    a full reload (page refresh).  This helper sends the actual values
+    (status, rows_posted, …) so progress and completion update live.
+
+    `fields` is a flat dict of the changed run-level fields.
+    """
+    if not fields:
+        return
+    frappe.publish_realtime(
+        event="doc_update",
+        message={
+            "doctype": "Cashew Import Run",
+            "name": run_name,
+            **fields,
+        },
+        doctype="Cashew Import Run",
+        docname=run_name,
+    )
