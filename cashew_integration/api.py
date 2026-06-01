@@ -18,7 +18,12 @@ from frappe.utils import cint, flt, now
 
 from cashew_integration.importer.parser import parse_csv, _assign_txn_type
 from cashew_integration.importer.category_lookup import build_category_type_map
-from cashew_integration.importer.mapping import apply_mappings, apply_exchange_rates
+from cashew_integration.importer.mapping import (
+    apply_mappings,
+    apply_exchange_rates,
+    _build_account_map,
+    _resolve_erp_account,
+)
 from cashew_integration.importer.validation import (
     validate_run_config,
     validate_rows_at_queue_time,
@@ -175,12 +180,12 @@ def validate_import(run_name: str) -> dict:
     rows = [_child_to_dict(r) for r in run.import_rows]
 
     # Reset queue-time errors so re-validation sees the current state of each row.
-    # Parse-stage errors (account not mapped, wrong file type) are permanent and kept.
-    # Everything else must be re-evaluated — the user may have fixed the issue
-    # (e.g. set a party, added a currency exchange record) since the last validate.
+    # Only file-structure errors are permanent — they genuinely cannot be fixed
+    # without a CSV re-upload. Everything else must be re-evaluated, because the
+    # user may have fixed the issue since the last validate: set a party, added a
+    # currency exchange record, or — see Step 0a below — added/activated a Cashew
+    # Account Mapping. Account-not-mapped is therefore NOT permanent.
     _PARSE_STAGE_ERRORS = {
-        "CASHEW_ACCOUNT_NOT_MAPPED",
-        "EXTERNAL_ACCOUNT_NOT_MAPPED",
         "FILE_WRONG_EXPORT_TYPE",
         "FILE_MISSING_COLUMNS",
     }
@@ -190,6 +195,17 @@ def validate_import(run_name: str) -> dict:
             row["validation_status"] = "Valid"
             row["validation_error_code"] = None
             row["validation_error_message"] = None
+
+    # Step 0a: re-resolve account mappings from the current Cashew Account Mapping
+    # so a mapping added/activated between parse and validate is picked up without
+    # a CSV re-upload — parity with the category re-resolution in Step 0.
+    # _resolve_erp_account re-flags rows still unmapped (CASHEW_ACCOUNT_NOT_MAPPED /
+    # EXTERNAL_ACCOUNT_NOT_MAPPED) and fills resolved_erp_account for now-mapped rows.
+    acct_map = _build_account_map(frappe.get_single("Cashew Settings"))
+    for row in rows:
+        if row.get("validation_status") in ("Skipped", "Error"):
+            continue
+        _resolve_erp_account(row, acct_map)
 
     # Step 0 (f006 c002 option-b): re-apply txn_type AND re-resolve
     # resolved_account from the current Cashew Category Mapping. Captures
@@ -245,6 +261,10 @@ def validate_import(run_name: str) -> dict:
                 "txn_type":                 row.get("txn_type"),
                 "resolved_route":           row.get("resolved_route"),
                 "resolved_account":         row.get("resolved_account"),
+                # Step 0a — persist re-resolved account mapping so a mapping added
+                # between parse and validate reaches the worker at post time.
+                "resolved_erp_account":     row.get("resolved_erp_account"),
+                "resolved_external_account": row.get("resolved_external_account"),
                 "requires_party":           row.get("requires_party", 0),
             },
         )
@@ -1053,3 +1073,17 @@ def _recent_runs(company: str) -> list[dict]:
         limit=5,
         ignore_permissions=False,
     )
+
+
+@frappe.whitelist()
+def get_import_row_field_guide() -> list[dict]:
+    """Plain-language definition of every Import Row field, grouped by purpose.
+
+    Static reference documentation (no document data), so it only requires a
+    logged-in session — read access to the Cashew Import Run doctype is the
+    natural gate. Shared verbatim by the Desk "Field Guide" button and the SPA
+    so help text stays in one place (cashew_integration/importer/field_guide.py).
+    """
+    frappe.has_permission("Cashew Import Run", "read", throw=True)
+    from cashew_integration.importer.field_guide import build_field_guide
+    return build_field_guide()

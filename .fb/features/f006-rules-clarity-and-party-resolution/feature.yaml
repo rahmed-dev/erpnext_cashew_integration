@@ -287,6 +287,51 @@ components:
       Helper check_loan_account_class_exists in validation.py runs in
       controller before c001 predicate. Single-company assumption (per
       Configuration Structure decision). Filters is_group=0, disabled=0.
+  - id: c010
+    name: account-mapping-revalidate-parity
+    type: backend-module
+    depends_on: [c002]
+    stage: done
+    note: >
+      Quick patch 2026-06-02 (bmad-fb-quick). Account mapping is now
+      re-resolved at Validate Import, mirroring the c002 option-b
+      category re-resolution. Previously CASHEW_ACCOUNT_NOT_MAPPED /
+      EXTERNAL_ACCOUNT_NOT_MAPPED were frozen in _PARSE_STAGE_ERRORS as
+      "permanent" — a mapping added/activated between parse and validate
+      was NOT picked up, forcing a CSV re-upload + re-parse (which breaks
+      if the uploaded File is gone from disk). Fix in api.py
+      validate_import: (1) dropped both account codes from
+      _PARSE_STAGE_ERRORS (only FILE_* stay permanent); (2) new "Step 0a"
+      rebuilds the account map from current Cashew Settings and re-runs
+      _resolve_erp_account per non-Skipped/Error row; (3) persistence
+      block now writes resolved_erp_account + resolved_external_account
+      (previously only category routing was persisted — a now-mapped row
+      would validate Valid but reach the worker with a null ERP account).
+      Verified live on CASHEW-IMPORT-2026-000006: 2 stale account-error
+      rows (Elevate Pay, NSave) → 43 valid / 0 failed, ERP accounts
+      persisted. File-structure errors still require re-upload (correct).
+  - id: c011
+    name: import-row-field-guide
+    type: full-stack
+    depends_on: []
+    stage: done
+    note: >
+      Quick build 2026-06-02 (bmad-fb-quick). Serves the feature's
+      "make import behavior understandable" goal: a plain-language guide
+      to every Cashew Import Row field (39 fields across 8 groups),
+      addressing user confusion about fields like resolved_external_account.
+      SINGLE SOURCE OF TRUTH for help text, shared Desk + SPA per user
+      request: definitions authored once in
+      cashew_integration/importer/field_guide.py (FIELD_GUIDE_GROUPS +
+      FIELD_DEFINITIONS; labels merged live from doctype meta so renames
+      don't drift). Exposed via whitelisted api.get_import_row_field_guide
+      (gated on Cashew Import Run read perm — static reference data, no
+      doc). Desk: "Field Guide" custom button on Cashew Import Run form
+      (always visible) opens a grouped dialog with a client-side filter
+      box; result cached per session. SPA reuse = call the same endpoint
+      (CLAUDE.md api.py-reuse rule); not yet wired into the Vue SPA.
+      Verified: endpoint returns 8 groups / 39 fields, all label+def
+      populated.
 depends_on:
   - f001
 

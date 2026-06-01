@@ -169,6 +169,11 @@ frappe.ui.form.on("Cashew Import Run", {
 function _update_buttons(frm) {
 	const s = frm.doc.status;
 
+	// Field Guide — "what does each row field mean?" help. Always available.
+	// Content comes from the shared get_import_row_field_guide endpoint so the
+	// Desk dialog and the SPA show identical definitions.
+	frm.add_custom_button(__("Field Guide"), () => _show_field_guide());
+
 	// Open in Row Explorer (f006 c007) — deep-link to the Vue page.
 	// Visible whenever the run has rows, regardless of status (audit + edit).
 	if (frm.doc.rows_total && frm.doc.rows_total > 0) {
@@ -321,4 +326,67 @@ async function _save_if_dirty(frm) {
 		frappe.msgprint(__("Please fix validation errors and save the form before continuing."));
 		return false;
 	}
+}
+
+// ── Field Guide ──────────────────────────────────────────────────────────────
+// Fetched once per session from the shared endpoint, then cached. The SPA calls
+// the same cashew_integration.api.get_import_row_field_guide method.
+let _field_guide_cache = null;
+
+async function _show_field_guide() {
+	if (!_field_guide_cache) {
+		const r = await frappe.call({
+			method: "cashew_integration.api.get_import_row_field_guide",
+			freeze: true,
+			freeze_message: __("Loading field guide…"),
+		});
+		_field_guide_cache = r.message || [];
+	}
+
+	const esc = frappe.utils.escape_html;
+	const groups_html = _field_guide_cache.map((grp) => {
+		const rows = grp.fields.map((f) => `
+			<tr class="fg-row">
+				<td class="fg-label" style="white-space:nowrap;vertical-align:top;padding:6px 12px 6px 0;font-weight:600;">
+					${esc(f.label)}
+					<div class="text-muted" style="font-weight:400;font-size:11px;">${esc(f.fieldname)}</div>
+				</td>
+				<td class="fg-def" style="vertical-align:top;padding:6px 0;">${esc(f.definition)}</td>
+			</tr>`).join("");
+		return `
+			<div class="fg-group" style="margin-bottom:18px;">
+				<h5 style="margin-bottom:2px;">${esc(grp.group)}</h5>
+				${grp.intro ? `<div class="text-muted" style="font-size:12px;margin-bottom:8px;">${esc(grp.intro)}</div>` : ""}
+				<table class="table table-sm" style="margin:0;"><tbody>${rows}</tbody></table>
+			</div>`;
+	}).join("");
+
+	const d = new frappe.ui.Dialog({
+		title: __("Import Row — Field Guide"),
+		size: "large",
+		fields: [{ fieldtype: "HTML", fieldname: "guide" }],
+	});
+	d.fields_dict.guide.$wrapper.html(`
+		<div style="margin-bottom:10px;">
+			<input type="text" class="form-control fg-search" placeholder="${__("Filter fields…")}">
+		</div>
+		<div class="fg-body">${groups_html}</div>
+	`);
+
+	// Client-side filter across label, fieldname, and definition text.
+	d.$wrapper.find(".fg-search").on("keyup", function () {
+		const q = (this.value || "").toLowerCase();
+		d.$wrapper.find(".fg-group").each(function () {
+			const $grp = $(this);
+			let any = false;
+			$grp.find(".fg-row").each(function () {
+				const match = $(this).text().toLowerCase().includes(q);
+				$(this).toggle(match);
+				if (match) any = true;
+			});
+			$grp.toggle(any);
+		});
+	});
+
+	d.show();
 }
