@@ -260,9 +260,19 @@ def _assign_txn_type(row: dict, category_map: dict) -> None:
 
     ctype = mapping.get("category_type")
     if ctype == "Income":
-        row["txn_type"] = "Income"
+        row["txn_type"]       = "Income"
+        # Income/Expense always route via Journal Entry (mirrors
+        # mapping._resolve_category). Set it here so the re-validate paths
+        # (validate_import / row_explorer_revalidate) that call this function
+        # re-derive the route too — otherwise a row that ever landed with an
+        # empty resolved_route stays stuck at MAPPING_NOT_FOUND forever, since
+        # _resolve_category (the only other route-setter) is skipped on
+        # re-validate. Only mapped rows reach here, so genuinely unmapped rows
+        # still fall through to the MAPPING_NOT_FOUND gate.
+        row["resolved_route"] = "Journal Entry"
     elif ctype == "Expense":
-        row["txn_type"] = "Expense"
+        row["txn_type"]       = "Expense"
+        row["resolved_route"] = "Journal Entry"
     elif ctype == "Loan Out":
         row["txn_type"]       = "Loan Receivable"
         row["resolved_route"] = "Loan Receivable JE"

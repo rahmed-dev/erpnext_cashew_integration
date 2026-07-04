@@ -332,6 +332,36 @@ components:
       (CLAUDE.md api.py-reuse rule); not yet wired into the Vue SPA.
       Verified: endpoint returns 8 groups / 39 fields, all label+def
       populated.
+  - id: c012
+    name: revalidate-route-heal
+    type: backend-module
+    depends_on: [c002]
+    stage: done
+    note: >
+      Quick patch 2026-07-04 (bmad-fb-quick). Sibling of c010, for
+      resolved_route. Income/Expense rows only ever get resolved_route
+      set in importer/mapping._resolve_category (parse/map stage), which
+      early-returns on validation_status=="Error". The re-validate paths
+      (api.validate_import Step 0, api.row_explorer_revalidate) re-derive
+      txn_type / resolved_account / requires_party / party but never
+      resolved_route — so any Income/Expense row that ever landed with an
+      empty resolved_route was permanently stuck at MAPPING_NOT_FOUND
+      ("no category mapping found") even when the category WAS mapped, and
+      no amount of re-validate or mapping-config editing could clear it.
+      Fix: importer/parser._assign_txn_type now sets
+      resolved_route="Journal Entry" on the mapped Income and Expense
+      branches (mirrors mapping._resolve_category). Both re-validate paths
+      already call _assign_txn_type, so the single-point change heals both
+      + parse with no drift. Only mapped rows reach that branch, so
+      genuinely unmapped rows still hit the MAPPING_NOT_FOUND gate.
+      Diagnosed on CASHEW-IMPORT-2026-000009 row_idx 36 (category
+      "Freelance", mapped, 40+ Valid siblings) — sole stuck row app-wide
+      (all-runs empty-route non-transfer count 1 → 0 after re-validate).
+      Also deleted a junk Cashew Category Mapping whose cashew_category was
+      "Freelance' /" (the user had pasted the error-message text as a
+      category while trying to fix it — a symptom, not the cause).
+      Verified: row 36 → Valid, resolved_route "Journal Entry",
+      resolved_account "Freelance - CS", error cleared.
 depends_on:
   - f001
 
