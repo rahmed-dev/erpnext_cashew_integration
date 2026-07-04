@@ -362,6 +362,53 @@ components:
       category while trying to fix it — a symptom, not the cause).
       Verified: row 36 → Valid, resolved_route "Journal Entry",
       resolved_account "Freelance - CS", error cleared.
+  - id: c013
+    name: same-day-transfer-pair-split
+    type: backend-module
+    depends_on: [c001]
+    stage: done
+    note: >
+      Quick patch 2026-07-04 (bmad-fb-quick). Transfer legs that could not
+      infer their other leg (CASHEW-IMPORT-2026-000010). Two root causes,
+      both fixed. (1) Grouping bug in importer/parser._classify_transfer_rows:
+      paired-transfer legs are grouped by (note, date), then any group whose
+      size != 2 was blanket-blocked as TRANSFER_PAIR_INCOMPLETE. But the SAME
+      transfer done twice in one day carries an identical note, so N genuine
+      pairs collapse into one group of 2N (run 000010: two NSave → Petty Cash
+      transfers on 2026-06-17 = a group of 4, rows 42/43/46/47, all stuck).
+      Fix: new _pair_transfer_legs() splits a group into source(income=false)/
+      dest(income=true) pairs before classifying; only a truly unmatched leg
+      is incomplete. FX transfers scale the two legs differently (49.5 USD ↔
+      13744.17 PKR), so amounts can't pair them — matching keys off
+      raw_txn_time (the legs post ~1s apart; OUT :30, IN :31), falling back to
+      row proximity. _leg_time handles both str "HH:MM:SS" (parse) and
+      datetime.timedelta (DB round-trip on re-validate). (2) c012-class
+      re-validate strand: api.validate_import re-ran _assign_txn_type but NOT
+      _classify_transfer_rows and skipped Transfer-family rows, so a leg that
+      errored at parse was reset to Valid yet kept txn_type "Transfer" with
+      transfer_pair_row_idx unset → worker parked it forever ("partner never
+      encountered"). Fix: validate_import now re-runs _classify_transfer_rows
+      over the reset rows (Step 0-transfer) AND persists transfer_pair_row_idx
+      + resolved_route in the row write-back (both were previously omitted, so
+      the worker — which reads legs from the DB child rows — never saw the
+      re-derived pair link). _classify_transfer_rows now also stamps
+      resolved_route ("Transfer JV" / "External Transfer JE") itself instead
+      of relying on mapping._resolve_category (which the re-validate path
+      skips). Verified end-to-end: validate_import on 000010 → rows
+      42↔43 / 46↔47 paired by time, Valid, route "Transfer JV", pair idx
+      persisted to DB, 0 remaining errors; single pairs (rows 4/5, 30/31)
+      unaffected. Regression test added
+      (test_parser.test_two_same_day_same_note_transfers_split_into_pairs);
+      full parser suite 17/17. Confirmed the healed FX pairs actually POST:
+      post_transfer_pair derives the implied rate from the two legs (dest =
+      company currency) so the JV balances by construction — both pairs created
+      a Journal Entry with 0 imbalance (rolled-back console run, no ERP
+      mutation). Also hardened api.row_explorer_revalidate: that single-row
+      surface cannot re-pair a transfer (pairing needs the whole file), so it
+      now re-errors a Transfer row with no transfer_pair_row_idx as
+      TRANSFER_PAIR_INCOMPLETE instead of stamping it Valid-but-unpaired (which
+      the worker would have parked forever); already-paired rows still
+      revalidate to Valid.
 depends_on:
   - f001
 

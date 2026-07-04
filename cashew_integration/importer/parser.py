@@ -338,43 +338,57 @@ def _classify_transfer_rows(rows: list[dict]) -> None:
         groups.setdefault(key, []).append(row)
 
     for key, group in groups.items():
-        if len(group) != 2:
-            # incomplete pair — only block if partner account exists in the file
-            for row in group:
-                partner = _partner_account(row)
-                if partner in all_accounts_in_file:
-                    _error(row, "TRANSFER_PAIR_INCOMPLETE",
-                           f"Transfer pair has {len(group)} leg(s); expected exactly 2.")
-                else:
-                    # partner is external — treat each standalone leg as External Transfer
-                    row["txn_type"] = "External Transfer"
-                    row["resolved_external_account"] = None  # resolved in C003
-            continue
+        # A single (note, date) key can legitimately hold MORE than one transfer:
+        # the same transfer repeated on the same day carries an identical note, so
+        # N genuine pairs collapse into one group of 2N. Split into source/dest
+        # pairs first; only a truly unmatched leg is an incomplete pair. FX
+        # transfers scale the two legs differently, so pairing keys off
+        # raw_txn_time (the legs post ~1s apart), never on amount.
+        pairs, leftovers = _pair_transfer_legs(group)
 
-        leg_a, leg_b = group
-        # identify source (income_flag=false) and dest (income_flag=true)
-        source_leg = leg_a if leg_a["income_flag"] == "false" else leg_b
-        dest_leg   = leg_a if leg_a["income_flag"] == "true"  else leg_b
-
-        # check whether partner account is in the file
-        source_partner = _partner_account(source_leg)
-        dest_partner   = _partner_account(dest_leg)
-
-        partner_in_file = (
-            source_partner in all_accounts_in_file
-            and dest_partner in all_accounts_in_file
-        )
-
-        if partner_in_file:
-            source_leg["txn_type"] = "Transfer"
-            dest_leg["txn_type"]   = "Transfer"
-            source_leg["transfer_pair_row_idx"] = dest_leg["row_idx"]
-            dest_leg["transfer_pair_row_idx"]   = source_leg["row_idx"]
-        else:
-            # at least one partner external
-            for row in group:
+        for row in leftovers:
+            partner = _partner_account(row)
+            if partner in all_accounts_in_file:
+                _error(row, "TRANSFER_PAIR_INCOMPLETE",
+                       "Transfer leg has no matching partner leg "
+                       f"(group of {len(group)} under one note/date).")
+            else:
+                # partner is external — treat each standalone leg as External Transfer
                 row["txn_type"] = "External Transfer"
-                row["resolved_external_account"] = None  # C003 resolves from mapping
+                row["resolved_route"] = "External Transfer JE"
+                row["resolved_external_account"] = None  # resolved in C003
+
+        for leg_a, leg_b in pairs:
+            # identify source (income_flag=false) and dest (income_flag=true)
+            source_leg = leg_a if leg_a["income_flag"] == "false" else leg_b
+            dest_leg   = leg_a if leg_a["income_flag"] == "true"  else leg_b
+
+            # check whether partner account is in the file
+            source_partner = _partner_account(source_leg)
+            dest_partner   = _partner_account(dest_leg)
+
+            partner_in_file = (
+                source_partner in all_accounts_in_file
+                and dest_partner in all_accounts_in_file
+            )
+
+            if partner_in_file:
+                source_leg["txn_type"] = "Transfer"
+                dest_leg["txn_type"]   = "Transfer"
+                # Stamp the route here, not only via mapping._resolve_category:
+                # the re-validate path re-runs _classify_transfer_rows but NOT
+                # _resolve_category, so without this a healed pair stays
+                # route-empty and re-trips MAPPING_NOT_FOUND (same class as c012).
+                source_leg["resolved_route"] = "Transfer JV"
+                dest_leg["resolved_route"]   = "Transfer JV"
+                source_leg["transfer_pair_row_idx"] = dest_leg["row_idx"]
+                dest_leg["transfer_pair_row_idx"]   = source_leg["row_idx"]
+            else:
+                # at least one partner external
+                for row in (leg_a, leg_b):
+                    row["txn_type"] = "External Transfer"
+                    row["resolved_route"] = "External Transfer JE"
+                    row["resolved_external_account"] = None  # C003 resolves from mapping
 
     # clean up temporary classification keys
     for row in transfer_rows:
@@ -394,6 +408,75 @@ def _partner_account(row: dict) -> str:
     if row["raw_account"] == source_name:
         return dest_name
     return source_name
+
+
+def _pair_transfer_legs(group: list[dict]) -> tuple[list[tuple[dict, dict]], list[dict]]:
+    """
+    Split transfer legs sharing one (note, date) into source/dest pairs.
+
+    Each pair is one outgoing leg (income_flag "false") matched to one incoming
+    leg (income_flag "true"). Matching prefers the nearest raw_txn_time — the two
+    legs of a Cashew transfer post ~1s apart — and falls back to row proximity
+    when times are absent. Amounts are NOT used: an FX transfer scales the two
+    legs differently. Returns (pairs, leftovers); leftovers are legs with no
+    partner (odd count, or all-same-direction).
+    """
+    sources = [r for r in group if r.get("income_flag") == "false"]
+    dests   = [r for r in group if r.get("income_flag") == "true"]
+
+    pairs: list[tuple[dict, dict]] = []
+    used_dest: set[int] = set()
+    for src in sorted(sources, key=lambda r: r["row_idx"]):
+        best = None
+        for dst in dests:
+            if dst["row_idx"] in used_dest:
+                continue
+            gap = _leg_gap(src, dst)
+            if best is None or gap < best[0]:
+                best = (gap, dst)
+        if best is None:
+            continue
+        used_dest.add(best[1]["row_idx"])
+        pairs.append((src, best[1]))
+
+    matched = {r["row_idx"] for pair in pairs for r in pair}
+    leftovers = [r for r in group if r["row_idx"] not in matched]
+    return pairs, leftovers
+
+
+def _leg_time(row: dict):
+    """
+    Seconds-since-midnight from raw_txn_time, or None when absent/unparseable.
+
+    Handles both shapes the value takes: a "HH:MM:SS" string at parse time (from
+    the CSV) and a datetime.timedelta when the row is re-read from the DB on
+    re-validate (Frappe Time fields deserialise to timedelta).
+    """
+    t = row.get("raw_txn_time")
+    if not t:
+        return None
+    if hasattr(t, "total_seconds"):        # datetime.timedelta (DB round-trip)
+        return int(t.total_seconds())
+    parts = str(t).strip().split(":")
+    try:
+        h = int(parts[0])
+        m = int(parts[1])
+        s = int(parts[2]) if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        return None
+    return h * 3600 + m * 60 + s
+
+
+def _leg_gap(a: dict, b: dict) -> tuple:
+    """
+    Distance between two legs for pair matching. Primary key: |Δ raw_txn_time| in
+    seconds when both legs have a time; otherwise fall back to |Δ row_idx|. The
+    leading rank (0 vs 1) keeps time matches strictly ahead of index-only ones.
+    """
+    ta, tb = _leg_time(a), _leg_time(b)
+    if ta is not None and tb is not None:
+        return (0, abs(ta - tb))
+    return (1, abs(a["row_idx"] - b["row_idx"]))
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

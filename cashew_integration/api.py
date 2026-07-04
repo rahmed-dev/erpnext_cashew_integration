@@ -16,7 +16,11 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now
 
-from cashew_integration.importer.parser import parse_csv, _assign_txn_type
+from cashew_integration.importer.parser import (
+    parse_csv,
+    _assign_txn_type,
+    _classify_transfer_rows,
+)
 from cashew_integration.importer.category_lookup import build_category_type_map
 from cashew_integration.importer.mapping import (
     apply_mappings,
@@ -200,6 +204,15 @@ def validate_import(run_name: str) -> dict:
             row["validation_error_code"] = None
             row["validation_error_message"] = None
 
+    # Step 0-transfer: re-derive Transfer/External Transfer/Adjustment classification
+    # AND transfer-pair links from the freshly reset rows. Parse runs this once, but
+    # a transfer leg that errored at parse (e.g. a same-day/same-note group that
+    # looked like an over-sized pair) is reset above and must be re-paired here —
+    # otherwise it stays txn_type "Transfer" with transfer_pair_row_idx unset, goes
+    # Valid, and the worker later parks it forever ("partner never encountered").
+    # This is the transfer analogue of the c012 re-validate route heal.
+    _classify_transfer_rows(rows)
+
     # Step 0a: re-resolve account mappings from the current Cashew Account Mapping
     # so a mapping added/activated between parse and validate is picked up without
     # a CSV re-upload — parity with the category re-resolution in Step 0.
@@ -265,6 +278,12 @@ def validate_import(run_name: str) -> dict:
                 "txn_type":                 row.get("txn_type"),
                 "resolved_route":           row.get("resolved_route"),
                 "resolved_account":         row.get("resolved_account"),
+                # Persist the re-derived transfer pair link so the worker can match
+                # both legs at post time. Re-validate re-runs _classify_transfer_rows
+                # (Step 0-transfer); without writing this back, a leg healed from an
+                # over-sized same-day/same-note group would keep its parse-time 0 and
+                # the worker would park it forever ("partner never encountered").
+                "transfer_pair_row_idx":    row.get("transfer_pair_row_idx") or 0,
                 # Step 0a — persist re-resolved account mapping so a mapping added
                 # between parse and validate reaches the worker at post time.
                 "resolved_erp_account":     row.get("resolved_erp_account"),
@@ -771,6 +790,22 @@ def row_explorer_revalidate(
                 if msg and row_dict.get("validation_status") != "Error":
                     from cashew_integration.importer.errors import set_row_validation_error
                     set_row_validation_error(row_dict, "CATEGORY_ACCOUNT_CLASS_MISMATCH", msg)
+
+        # A paired internal Transfer needs its partner leg. This single-row surface
+        # cannot re-pair — pairing needs the whole file (validate_import's
+        # Step 0-transfer). So if the stored pair link is missing, keep the row
+        # errored instead of stamping it Valid-but-unpaired, which the worker would
+        # later park forever ("partner never encountered"). Run Validate Import to
+        # re-pair both legs (e.g. a same-day/same-note group — see f006 c013).
+        if (row_dict.get("txn_type") == "Transfer"
+                and not row_dict.get("transfer_pair_row_idx")
+                and row_dict.get("validation_status") != "Error"):
+            from cashew_integration.importer.errors import set_row_validation_error
+            set_row_validation_error(
+                row_dict, "TRANSFER_PAIR_INCOMPLETE",
+                "Transfer leg is unpaired on this row-level surface; run "
+                "Validate Import to re-pair both legs across the file.",
+            )
 
         # If no validator fired, the row is clean — stamp Valid so the UI pill
         # doesn't show "Pending" for re-validated rows that previously read Valid.

@@ -317,3 +317,43 @@ class TestParserBalanceCorrectionClassification(FrappeTestCase):
         )
         rows = parse_csv(_csv(adj_row), "PKR")
         self.assertEqual(rows[0]["txn_type"], "Adjustment")
+
+    def test_two_same_day_same_note_transfers_split_into_pairs(self):
+        """Two identical NSave → Petty Cash transfers on the same day share one
+        (note, date) key — a group of 4 legs. They must split into two pairs, not
+        be blanket-blocked as an over-sized pair (the CASHEW-IMPORT-000010 bug).
+        Legs are FX-scaled (unequal amounts), so pairing keys off raw_txn_time."""
+        # Transfer A @ 13:41, Transfer B @ 18:30 — legs post 1s apart (OUT :30, IN :31)
+        a_in = (
+            'Petty Cash,13744.17,PKR,In A,"Transferred Balance\nNSave → Petty Cash",'
+            '2026-06-17 13:41:31.000,true,null,Balance Correction,,,,,,\n'
+        )
+        a_out = (
+            'NSave,-49.5,USD,Out A,"Transferred Balance\nNSave → Petty Cash",'
+            '2026-06-17 13:41:30.000,false,null,Balance Correction,,,,,,\n'
+        )
+        b_in = (
+            'Petty Cash,2629.31,PKR,In B,"Transferred Balance\nNSave → Petty Cash",'
+            '2026-06-17 18:30:31.000,true,null,Balance Correction,,,,,,\n'
+        )
+        b_out = (
+            'NSave,-9.5,USD,Out B,"Transferred Balance\nNSave → Petty Cash",'
+            '2026-06-17 18:30:30.000,false,null,Balance Correction,,,,,,\n'
+        )
+        rows = parse_csv(_csv(a_in, a_out, b_in, b_out), "PKR")
+        self.assertEqual(len(rows), 4)
+
+        for row in rows:
+            self.assertEqual(row["txn_type"], "Transfer",
+                             f"Row {row['row_idx']} ({row['title']}) should be Transfer, "
+                             f"got {row['txn_type']}")
+            self.assertNotEqual(row.get("validation_status"), "Error",
+                                f"Row {row['row_idx']} ({row['title']}) must not error.")
+
+        by_title = {r["title"]: r for r in rows}
+        # Pairing must follow time proximity, not amount: In A ↔ Out A (13:41),
+        # In B ↔ Out B (18:30) — never In A ↔ Out B.
+        self.assertEqual(by_title["In A"]["transfer_pair_row_idx"], by_title["Out A"]["row_idx"])
+        self.assertEqual(by_title["Out A"]["transfer_pair_row_idx"], by_title["In A"]["row_idx"])
+        self.assertEqual(by_title["In B"]["transfer_pair_row_idx"], by_title["Out B"]["row_idx"])
+        self.assertEqual(by_title["Out B"]["transfer_pair_row_idx"], by_title["In B"]["row_idx"])
