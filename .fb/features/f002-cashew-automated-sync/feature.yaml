@@ -1,13 +1,44 @@
 id: f002
 name: Cashew Automated Sync
 status: backlog
-stage: not-started
+stage: arch-done
 owner: bmad-fb-architect
+priority: medium
 
 goal: >
-  Replace or complement manual CSV imports with an automated sync mechanism
-  if Cashew exposes a supported API, webhook, or integration channel.
+  Import Cashew transactions from a manual periodic (~monthly) FULL SQLite-DB
+  backup placed in Google Drive, via an ERPNext file-picker UI, reusing the f001
+  posting pipeline. Replaces the original (cancelled) API-sync idea — Cashew has
+  no API and its live Sync backup lives in Drive's hidden appDataFolder
+  (unreachable). The manual export is Cashew's full backup DB.
+
+transport: google-drive-sqlite-backup   # manual monthly full-DB export to a visible Drive folder
+direction: one-way-cashew-to-erpnext
+idempotency: cashew-transaction_pk (stable UUID, insert-only; supersedes f001 content-hash for this path)
+drive_auth: service-account
+
+components:
+  - drive-source-adapter     # service-account auth + folder list + fetch selected .sql bytes
+  - sqlite-parser-variant    # open SQLite, read transactions, resolve category_fk/wallet_fk -> names, income flag, transfer pairs, filter paid=1
+  - drive-file-picker-ui      # ERPNext UI to browse the export folder and pick a backup for this run
+  - import-run-wiring         # feed parsed rows into existing Cashew Import Run + worker.py/posting.py
+
+scan_facts:   # from cashew-2026-06-27-05-22-48-840261.sql (2026-06-27)
+  artifact: binary SQLite 3 DB (despite .sql extension)
+  transactions: 534 (all paid=1)
+  wallets: 7 (pkr + usd)
+  categories: 55
+  delete_logs: 1277
+  stable_id: transaction_pk (UUID)
+  income_flag: income 0/1 (no sign inference needed)
+  transfers: paired_transaction_fk (29 paired) + category_fk='0' (61 total) — unpaired tail exists
+  currency: per-wallet via wallet_fk -> wallets.currency
 
 notes:
-  - Discovery task only for now; implementation deferred until f001 is stable.
-  - Keep boundaries in f001 clean so transport (CSV/API) can be swapped later.
+  - Auto-sync of Cashew's live Sync backup REJECTED — appDataFolder is app-private (no SA/OAuth access).
+  - Path B (full backup, stable IDs) ADOPTED — the scanned export IS the SQLite backup, not CSV.
+  - FK->name resolution lets existing name-based Category/Account Mappings be reused with no rework.
+  - SQLite read uses Python stdlib sqlite3 — no new dependency.
+  - Edit/delete propagation (date_time_modified + delete_logs) reserved, NOT in scope.
+  - Open TD items in arch/decisions.md D11: cross-path dedup rule, unpaired transfers, paid=1 filter, folder pointer.
+  - See arch/decisions.md for full rationale (D8–D11 supersede D3/D4, refine D6).

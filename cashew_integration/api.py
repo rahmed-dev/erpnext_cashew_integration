@@ -21,6 +21,7 @@ from cashew_integration.importer.parser import (
     _assign_txn_type,
     _classify_transfer_rows,
 )
+from cashew_integration.importer.sqlite_reader import read_sqlite
 from cashew_integration.importer.category_lookup import build_category_type_map
 from cashew_integration.importer.mapping import (
     apply_mappings,
@@ -99,7 +100,7 @@ def _coerce_row_indices(value):
 @frappe.whitelist()
 def parse_and_preview(run_name: str) -> dict:
     """
-    1. Load the attached CSV from the run.
+    1. Load the attached source file (CSV or SQLite) from the run.
     2. Parse and normalise all rows.
     3. Apply account/category/exchange-rate/party mappings.
     4. Save rows to the Cashew Import Row child table.
@@ -123,8 +124,15 @@ def parse_and_preview(run_name: str) -> dict:
 
     company_currency = frappe.get_cached_value("Company", run.company, "default_currency")
 
-    # Parse
-    rows = parse_csv(file_content, company_currency)
+    # Parse — dispatch on the run's source_type (CSV parser vs SQLite reader).
+    # Both return the same normalized row-dict list, so everything below is shared.
+    if run.source_type == "SQLite":
+        rows = read_sqlite(
+            file_content, company_currency,
+            from_date=run.import_from_date, to_date=run.import_to_date,
+        )
+    else:
+        rows = parse_csv(file_content, company_currency)
 
     # Map
     apply_mappings(rows, run)
@@ -254,11 +262,14 @@ def validate_import(run_name: str) -> dict:
     # Step 2: Strict row validation (uses freshly filled rates).
     validate_rows_at_queue_time(rows)
 
-    # Step 3: Idempotency pre-check — surface duplicates before the user queues
-    # so they can review or abort without any rows touching the ERP.
-    # Worker re-runs this at post time for race-condition safety.
-    apply_idempotency_guard(rows, run)
-
+    # Step 3: Idempotency is deliberately NOT run here. The guard stamps
+    # posted_doctype / posted_docname + Skipped onto every row that matches an
+    # already-posted document, and this method used to persist those fields — so
+    # clicking Validate made overlapping rows render as "posted" even though no
+    # GL entry was created (import state bleeding into a pure check; the source
+    # of the "validate is posting" report). Duplicates are surfaced and skipped
+    # at queue_run, and re-checked by the worker at post time, so nothing can
+    # double-post. Validate now only checks rows and reports errors.
     run_config_errors = get_run_config_errors(run, rows)
 
     for row in rows:
@@ -271,9 +282,11 @@ def validate_import(run_name: str) -> dict:
                 "validation_error_message": row.get("validation_error_message"),
                 "exchange_rate":            row.get("exchange_rate"),
                 "base_amount":              row.get("base_amount"),
-                "is_duplicate":             row.get("is_duplicate", 0),
-                "posted_doctype":           row.get("posted_doctype"),
-                "posted_docname":           row.get("posted_docname"),
+                # posted_doctype / posted_docname / is_duplicate are NOT written
+                # here — Validate is a pure check and must never stamp posting
+                # state onto rows (see Step 3 note above). Those fields are owned
+                # by the idempotency guard at queue time and the worker at post
+                # time.
                 # f006 c002 option-b — persist re-evaluated routing + mapping.
                 "txn_type":                 row.get("txn_type"),
                 "resolved_route":           row.get("resolved_route"),
@@ -306,29 +319,115 @@ def validate_import(run_name: str) -> dict:
     run.db_set("rows_failed", failed_count, notify=True)
     run.db_set("rows_skipped", skipped_count, notify=True)
 
-    # Row-level errors are resolved in the RowsWorkbench AFTER validation (the
-    # workbench is only editable at status 'Validated'), so they must NOT block
-    # the Parsed -> Validated transition. queue_run re-validates and refuses to
-    # post while any row has an error (RUN_BLOCKED_BY_ROW_ERRORS), so posting
-    # stays safe regardless. Only run-level config blockers — which can't be
-    # fixed row-by-row — hold the run in Parsed.
-    new_status = "Parsed" if run_config_errors else "Validated"
-    run.db_set("status", new_status, notify=True)
+    # Validate NEVER advances the run status (Option A — validation is decoupled
+    # from import). It is a pure check: row errors live on the rows (the
+    # rows_failed counter + per-row pills), and the run stays exactly where it
+    # is. The explicit "Ready to Import" step (arm_import) is the ONLY thing that
+    # moves Parsed -> Validated, and it refuses while any row is in error. This
+    # is what stops Validate from ever pulling a run down the import path.
     frappe.db.commit()
 
-    # The payload `status` describes the validation OUTCOME (clean vs issues) and
-    # is independent of the status transition — Desk's _validate_import callback
-    # keys off it to pick the "Validation Passed" vs "Validation Issues" dialog.
+    # The payload `status` describes the validation OUTCOME (clean vs issues) so
+    # Desk's _validate_import callback can pick the "Validation Passed" vs
+    # "Validation Issues" dialog. `run_status` is the UNCHANGED current status.
     payload_status = "validated" if (failed_count == 0 and not run_config_errors) else "invalid"
     return {
         "status": payload_status,
-        "run_status": new_status,
+        "run_status": run.status,
         "rows_valid": valid_count,
         "rows_failed": failed_count,
         "error_code_counts": error_code_counts,
         "fx_error_count": fx_error_count,
         "fx_summary": fx_summary,
         "run_config_errors": run_config_errors if run_config_errors else [],
+    }
+
+
+# ── arm for import ──────────────────────────────────────────────────────────────
+
+@frappe.whitelist()
+def arm_import(run_name: str) -> dict:
+    """Explicit "Ready to Import" step: transition Parsed -> Validated.
+
+    Validate is a pure check that never advances the run (Option A). This is the
+    deliberate gesture that arms the run for posting — the separation the user
+    asked for: validating reports, arming commits.
+
+    Runs config + queue-time row validation and refuses (RUN_BLOCKED_BY_ROW_ERRORS)
+    while any row is in error. The idempotency guard runs HERE — surfacing
+    duplicates (and stamping posted_docname) as import prep, which is expected at
+    this step and is exactly what was removed from the pure Validate check.
+
+    Permission: Accountant or System Manager.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", doc=run, throw=True)
+
+    if run.status != "Parsed":
+        frappe.throw(
+            f"Run must be in Parsed status to arm for import (current: '{run.status}'). "
+            "Validate and fix any errored rows first.",
+            frappe.ValidationError,
+        )
+
+    rows = [_child_to_dict(r) for r in run.import_rows]
+
+    # Run-level config (raises RUN_CONFIG_MISSING) + strict row validation.
+    validate_run_config(run, rows)
+    validate_rows_at_queue_time(rows)
+    # Idempotency: surface + skip already-posted duplicates (import prep — this is
+    # the right place to stamp posted linkage, never during the Validate check).
+    apply_idempotency_guard(rows, run)
+
+    for row in rows:
+        frappe.db.set_value(
+            "Cashew Import Row",
+            {"parent": run.name, "row_idx": row["row_idx"]},
+            {
+                "validation_status":        row.get("validation_status"),
+                "validation_error_code":    row.get("validation_error_code"),
+                "validation_error_message": row.get("validation_error_message"),
+                "is_duplicate":             row.get("is_duplicate", 0),
+                "posted_doctype":           row.get("posted_doctype"),
+                "posted_docname":           row.get("posted_docname"),
+            },
+        )
+    emit_row_update_batch(run.name, [_row_patch(r) for r in rows])
+
+    valid_count = sum(1 for r in rows if r.get("validation_status") == "Valid")
+    failed_count = sum(1 for r in rows if r.get("validation_status") == "Error")
+    skipped_count = sum(1 for r in rows if r.get("validation_status") == "Skipped")
+
+    if failed_count > 0:
+        frappe.throw(
+            f"Import is blocked: {failed_count} row(s) still have errors. "
+            "Fix every errored row before arming for import.",
+            frappe.ValidationError,
+            title="RUN_BLOCKED_BY_ROW_ERRORS",
+        )
+    if valid_count == 0:
+        frappe.throw(
+            "No valid rows to import. Resolve the row-level errors before arming.",
+            frappe.ValidationError,
+        )
+
+    run.db_set("status",       "Validated",  notify=True)
+    run.db_set("rows_valid",   valid_count,   notify=True)
+    run.db_set("rows_failed",  failed_count,  notify=True)
+    run.db_set("rows_skipped", skipped_count, notify=True)
+    frappe.db.commit()
+    emit_run_progress(run.name, {
+        "status":       "Validated",
+        "rows_valid":   valid_count,
+        "rows_skipped": skipped_count,
+        "rows_failed":  failed_count,
+    })
+
+    return {
+        "status": "armed",
+        "run_status": "Validated",
+        "rows_valid": valid_count,
+        "rows_skipped": skipped_count,
     }
 
 

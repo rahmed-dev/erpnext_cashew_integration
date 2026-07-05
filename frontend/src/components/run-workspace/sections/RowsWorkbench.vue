@@ -25,7 +25,10 @@ const emit = defineEmits(['reload']);
 
 const isMobile = useIsMobile();
 
-const editable = computed(() => props.doc?.status === 'Validated');
+// Rows are fixed BEFORE arming now: Validate leaves the run at Parsed (Option A),
+// so the workbench must be editable at Parsed. Also editable at Validated (armed)
+// — queue_run re-validates as the backstop, so a late edit can't post unchecked.
+const editable = computed(() => ['Parsed', 'Validated'].includes(props.doc?.status));
 
 const state = reactive({
   search: '',

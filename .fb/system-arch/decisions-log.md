@@ -98,3 +98,32 @@ Rows missing required party after this pipeline are blocked from posting.
 ## Solo Adjustment Posting — 2026-04-08
 **Decision:** Solo Balance Correction / Balance Transfer rows (non-paired) always post as Adjustment Journal Entries against a configurable `balance_adjustment_account` on the run. No opt-in toggle. If the file contains adjustment rows and `balance_adjustment_account` is not set, the queue is blocked with `RUN_CONFIG_MISSING`.
 **Rationale:** Zero-touch import requires every row to be handled automatically. Skipping adjustment rows would leave real cash events unrecorded and require manual follow-up after every import. Auto-posting to a suspense/equity account keeps the books complete while the review_recommended flag in diagnostics signals rows that warrant accountant attention.
+
+## SQL (SQLite) Import — Second Ingestion Path — 2026-07-04 (f011)
+**Decision:** Add a Cashew SQLite ("SQL file") import path **alongside** the CSV import
+(f001), not replacing it. Implemented as a new reader module (`sqlite_reader.py`) that
+emits the **same normalized row-dict** `parser.parse_csv` emits, branched at the single
+CSV-specific seam — `api.parse_and_preview` (`api.py:127`) — by a new `source_type` field
+on `Cashew Import Run`. All downstream stages (mapping, validation, idempotency, worker,
+posting, diagnostics, SPA) are format-agnostic and reused unchanged (verified:
+`worker.process_run` reloads rows from the child table, never re-parses).
+**Crux:** `source_hash` parity — the SQLite reader must denormalize FKs to names and
+normalize types to the exact CSV string shapes (account/category/subcategory NAMES,
+currency code, `income` as `"true"`/`"false"`, date-only `txn_date`, full-precision
+amount) so the same transaction from CSV and SQL dedupes to one posting via the existing
+idempotency guard. Enforced by a golden CSV-vs-SQLite hash-parity test.
+**Precondition (assumption, per user — no investigation):** the current CSV/Cashew balance
+mismatch is assumed to be OMISSION (CSV dropped rows). If CSV instead posted wrong values,
+add-alongside double-counts and the prior CSV run must be reverted (f004).
+**Rationale:** Smallest change that meets the goal — one contained module + one branch,
+reusing the entire posting pipeline; keeps CSV as fallback and enables cross-source diffing.
+**Status:** Plan drafted (`features/f011-cashew-sql-import/arch/sql-import-plan.md`).
+BLOCKED on the actual `.sql` file for the schema→field mapping (esp. whether the transfer
+note string is stored or exporter-synthesized).
+
+### f011 Schema Scan — RESOLVED — 2026-07-04
+Scanned the real Cashew SQLite file (Drift schema v48, 553 txns). Plan §5 is dev-ready.
+Key parity rules locked: currency `.upper()` (DB lowercase vs CSV uppercase); epoch→site-tz
+before date (UTC seconds vs CSV local); amount signed → abs + direction from `income` col;
+transfer note stored verbatim (c004 dropped); row-scope filter `WHERE paid=1` (excludes the
+1 upcoming/unpaid txn — the likely original mismatch cause). Stage → arch-done.

@@ -1,0 +1,277 @@
+id: f011
+name: Cashew SQL (SQLite) Import
+status: done
+stage: done
+owner: bmad-fb-quick
+status_history: [arch-done, specced, done]
+
+goal: >
+  Add a second ingestion path that reads a Cashew SQLite backup/export ("SQL
+  file") directly and feeds the EXISTING import pipeline, so imports reflect
+  Cashew's source-of-truth tables rather than the flattened CSV export. Runs
+  ALONGSIDE the CSV path (f001); CSV is retained.
+
+context: >
+  This month a CSV import did not match Cashew's in-app balances. User decision:
+  do NOT investigate the CSV discrepancy — build the SQL path instead. The SQL
+  reader is expected to be more complete because it reads Cashew's own tables,
+  not the derived CSV view.
+
+decisions_ref: arch/decisions.md
+plan_ref: arch/sql-import-plan.md
+
+key_architecture:
+  - The import pipeline is format-agnostic. parse_and_preview (api.py) is the
+    ONLY CSV-specific seam — it calls parser.parse_csv, then apply_mappings,
+    then persists Cashew Import Row children. Everything after (validation,
+    idempotency, worker, posting, diagnostics, SPA) consumes persisted child
+    rows and is reused with zero change.
+  - SQL import = a new reader (sqlite_reader.py) that emits the SAME normalized
+    row-dict schema parse_csv emits, branched at the parse_and_preview seam by a
+    source_type discriminator on Cashew Import Run.
+  - source_hash PARITY is the crux of "add alongside": the SQLite reader must
+    reproduce the exact flattened strings the CSV hash is built from (account
+    NAME, currency code, category/subcategory NAMES, income as "true"/"false",
+    txn_date date-only, title, note) so the same transaction from CSV and SQL
+    dedupes to ONE posting via the existing idempotency guard.
+
+precondition:
+  - Approach assumes this month's discrepancy was OMISSION (CSV left rows out).
+    If instead CSV imported rows with WRONG values, add-alongside posts the
+    correct rows under new hashes and leaves the wrong CSV postings in place →
+    double-counted, not corrected. If that is the case, the prior CSV run needs
+    revert/cleanup (f004 revert) before/after the SQL run.
+
+blocked_on: []  # RESOLVED 2026-07-04 — schema scanned (Cashew Drift v48), plan §5 complete
+
+schema_scan:
+  file: cashew-2026-07-04-18-03-44-147880.sql  # binary SQLite, user_version 48
+  transactions: 553 (552 paid, 1 unpaid/upcoming)
+  key_findings:
+    - amount REAL signed (income=0⇒<0, income=1⇒≥0); take abs, direction from `income` col
+    - transfer note "Transferred Balance\\nX → Y" STORED verbatim in note → c004 dropped
+    - pair transfers by paired_transaction_fk (PRIMARY, not note+time); dangling fk → External Transfer
+    - 31 fk (30 resolve, 1 dangling = Meezan Bank external); 0 same-second >2 groups; 0 paid=1 orphans
+    - reader uses LEFT JOIN + error row (SQL_MASTER_UNRESOLVED); never INNER (silent drop = the bug we fix)
+    - .strip() account/title/note like the parser (hash parity)
+    - currency on wallet, lowercase pkr/usd → reader MUST .upper() for CSV hash parity
+    - date_created = UTC unix SECONDS; CSV exports LOCAL → convert via site tz (Asia/Karachi)
+    - row-scope filter WHERE paid=1 (excludes the 1 upcoming/unpaid future txn)
+    - sub_category_fk unused (0 rows) → sub_category always ""
+
+components:
+  - id: c001
+    name: SQLite Reader (schema→normalized-row, FK denorm, currency upper, tz-local date, date-window filter, source_hash parity)
+    stage: done
+    spec_file: specs/c001-spec.md
+    depends_on: []
+    build_notes: >
+      Built importer/sqlite_reader.py :: read_sqlite(). Hash "refactor" = import the
+      existing parser._compute_hash (already module-level; no parser.py edit — zero CSV
+      risk). Verified on real cashew-2026-07-04 file via bench console: 552 rows, 0
+      errors, currencies PKR/USD uppercased, income true/false, late-night UTC row →
+      next local day (2025-02-05), hand-computed source_hash matches. 30 internal FK
+      pairs (60 legs, 0 asymmetric), 2 External Transfer legs (Saving↔Meezan Bank: 1
+      dangling-FK + 1 classifier note-fallback), 3 Updated-Total-Balance adjustments.
+      FK pairing runs AFTER _classify_transfer_rows (classifier re-pairs by note+time
+      and would clobber FK-set transfer_pair_row_idx); _paired_fk/_txn_pk carried on
+      leading-underscore keys so _dict_to_child skips them.
+  - id: c002
+    name: source_type discriminator + import_from/to_date fields on Cashew Import Run + parse_and_preview branch
+    stage: done
+    spec_file: specs/c002-spec.md
+    depends_on: [c001]
+    build_notes: >
+      Added source_type (Select CSV/SQLite, default CSV, reqd, in_list_view) + import_from_date
+      / import_to_date (Date, depends_on eval:doc.source_type=='SQLite') to Cashew Import Run
+      JSON (field_order + fields); relabeled source_file "Source CSV File"→"Source File" (plain
+      Attach, no extension restriction — .sql/.sqlite/.db already upload; reader validates
+      readability at parse via SQL_FILE_UNREADABLE). api.parse_and_preview seam (was
+      rows = parse_csv(...)) now branches on run.source_type → read_sqlite(content, ccy,
+      from_date=run.import_from_date, to_date=run.import_to_date) else parse_csv; imported
+      read_sqlite from importer.sqlite_reader. from>to guard lives in read_sqlite and
+      propagates. bench migrate green. Verified via console on real cashew-2026-07-04 file:
+      full-DB SQLite run 552 rows (period 2025-02-05..2026-07-04); windowed 2025-02 run → 2
+      rows, period narrowed to 2025-02-05..2025-02-09; from>to throws SQL_DATE_WINDOW_INVALID
+      cleanly. (rows_failed=2 on full run = downstream apply_mappings flagging unmapped
+      masters — shared pipeline, not the seam.)
+  - id: c003
+    name: source_hash parity test (hash parity + posting/pairing) — GATE
+    stage: done
+    spec_file: specs/c003-spec.md
+    depends_on: [c001, c002]
+    build_notes: >
+      Built tests/test_sqlite_import.py :: TestSqliteImportGate — 9 tests, both halves
+      GREEN. HALF 1 (dedup parity): 8 shared txns emitted as CSV (local-time string +
+      UPPER currency) AND SQLite (UTC epoch + lowercase) from one row list, matched by
+      unique title; assert identical source_hash. Anti-trivial-pass verified empirically —
+      temporarily dropping .upper() in sqlite_reader made the parity tests FAIL (hash
+      mismatch), then reverted. Covers each known trap with a row that would break if the
+      transform were wrong: currency .upper() (pkr→PKR), tz (late-night UTC 2025-02-04
+      22:30 → Karachi-local 2025-02-05; UTC-day≠local-day asserted as ground truth), full
+      precision (123.456789 hashes on 10dp not the 2dp raw_amount), .strip() on
+      account/title/note, income "true"/"false", \n-note transfer leg, FX (USD). HALF 2
+      (books safety): fixture DB (internal FK pair + dangling-FK external + deleted-master)
+      → read_sqlite → apply_mappings → validate → worker._process into Code.Solutions;
+      assert the submitted Transfer JV moves between the RIGHT ERP accounts in the RIGHT
+      direction/amount (Saving→Crypto - CS DEBIT 120000, Petty Cash→Cash - CS CREDIT 120000)
+      — NOT merely that it balances (a submitted JE balances by construction; ERPNext
+      enforces debit==credit at submit, so that check is a tautology — advisor catch). The
+      external JE likewise asserted between Cash - CS ↔ Meezan Bank - CS for 5000. rows_skipped==0
+      guards against a dirty-state false-green (a Skipped row keeps posted_docname). CRUX FIX:
+      the test's _create_run must persist income_flag (mirror production api._dict_to_child,
+      skip only underscore keys) — the worker's canonical transfer-direction rule (source=income
+      false, dest=income true) reads it; test_integration's _create_run drops income_flag and its
+      transfer test never asserts direction, so copying it verbatim first produced a reversed JV.
+      Both legs ref ONE JE, FK pairing authoritative (_paired_fk↔_txn_pk + cross row_idx), dangling FK →
+      External Transfer JE, deleted master → SQL_MASTER_UNRESOLVED error row (LEFT-JOIN
+      contract, not dropped), date-window boundary is site-local (2025-02-05 window
+      includes the row, 2025-02-04 excludes it), from>to raises. Docstring states plainly
+      "hash parity green != transfers post correctly" + the residual gap (synthetic
+      cross-source proves the two code paths share a normalization contract; does NOT prove
+      read_sqlite matches Cashew's real CSV EXPORTER byte-for-byte — needs a same-DB CSV
+      export, spec §Ideal, still open). ENV NOTES: bench run-tests aborts in this env on
+      Frappe test-record dependency generation (missing HRMS 'Department Approver' —
+      pre-existing, hits test_integration too), so ran via a direct unittest runner
+      (scratchpad/run_c003.py: frappe.init/connect + TextTestRunner) which the suite is
+      designed for (real work.local DB, real accounts). CATEGORY_MAPPINGS intentionally
+      empty — Half-1 categories are only hashed, Half-2 rows are all transfer/external
+      (skip category resolution); avoids depending on category default-accounts absent from
+      this chart. No production code changed. NOT git-committed.
+  - id: c004
+    name: Transfer-note reconstruction
+    stage: dropped  # not needed — note stored verbatim in DB
+  - id: c005
+    name: SPA SQLite upload surface (source_type toggle + date-window inputs + .sql dropzone + source_type badge)
+    stage: done
+    spec_file: specs/c005-spec.md
+    depends_on: [c002]
+    build_notes: >
+      SPA (Vue) upload surface for the SQL path — additive, default CSV reproduces today's flow.
+      Touched 6 frontend files, zero backend, NO new whitelisted endpoint (API discipline intact):
+      (1) sections/UploadSection.vue — form gains source_type/import_from_date/import_to_date;
+      segmented frappe-ui <Button> CSV|SQLite toggle (design philosophy #5, no native select);
+      date-window block v-if=SQLite with two <Input type="date"> (From/To optional, "Blank =
+      import whole backup"); ensureRunExists + persistFieldChanges thread the 3 fields (send null
+      not undefined when blank; CSV forces dates null); canParse adds dateWindowInvalid computed
+      (from>to disables Parse + inline red hint) mirroring the c002 server guard (server stays
+      authoritative); subheader + toast copy path-aware. (2) upload/CsvDropzone.vue — new
+      source_type prop; SQLite widens picker accept to .sql,.sqlite,.db (+best-effort MIME),
+      validates by EXTENSION not MIME; path-aware copy; MAX_BYTES 50MB unchanged. (3)
+      shared/StatusPill.vue — new 'source-type' kind (CSV gray / SQLite indigo), reuses the
+      rounded-full render. (4) RunHeader.vue + (5) imports-list/RunCard.vue + RunRow.vue — render
+      the source-type pill next to the run-status pill (v-if guards it → old pre-c002 runs with
+      NULL source_type simply show no pill, correct). (6) pages/ImportsList.vue — added
+      'source_type' to the get_list fields array (reads stay frappe.client.*). RunWorkspace needs
+      NO read change: useRun uses frappe.client.get (full doc) so props.doc already carries the 3
+      fields. VERIFIED: bench build --app cashew_integration green (yarn build ✓, PWA sw.js
+      regenerated). Frappe-ui Input source-checked — 'date' IS in the type-prop validator whitelist
+      and the native <input type=date> emits YYYY-MM-DD via update:modelValue (advisor-flagged risk,
+      closed by reading node_modules/frappe-ui/src/components/Input.vue). Server side already proven
+      by c002's verify_c002.py (full-DB + windowed + from>to on the real cashew file). RESIDUAL:
+      in-browser runtime smoke (plan steps 2-4: toggle renders, date block show/hide, dropzone
+      accepts .sql, Parse persists source_type+dates, badge shows) NOT run — no bench web server was
+      up this session; static verification (compile + source-checked date input + proven server) is
+      strong but a manual /cashew click-through is the last confirmation. NOT git-committed.
+
+patches:
+  - id: p001
+    name: Close queue-time gate hole — unpaired Transfer legs half-posted
+    date: 2026-07-05
+    stage: done
+    summary: >
+      Bug: importing (esp. via SQL with a date window) could half-post — valid rows
+      committed while some rows stayed errored. Root cause traced on run 000010
+      (Failed, 71 posted + 4 Error/TRANSFER_PAIR_INCOMPLETE, posted=N): an internal
+      Transfer leg whose partner is absent (filtered out by the date window, or in a
+      different file) passed the queue-time gate as Valid — validation._validate_single_row
+      bypasses every check for transfer-family rows and never verified transfer_pair_row_idx
+      was set. So queue_run's failed_count was 0, the run queued, and only the WORKER
+      discovered the orphan at the end (pending_transfer leftover → TRANSFER_PAIR_INCOMPLETE)
+      AFTER other rows already committed (per-N-row commits, not atomic) → partial import.
+      api.row_explorer_revalidate already guarded this; the authoritative
+      validate_rows_at_queue_time path did not.
+      Fix: added the unpaired-Transfer-leg guard at the top of _validate_single_row
+      (txn_type=="Transfer" and not transfer_pair_row_idx → Error TRANSFER_PAIR_INCOMPLETE;
+      External Transfer / Adjustment post standalone and are exempt). Now failed_count>0 at
+      queue time and queue_run throws RUN_BLOCKED_BY_ROW_ERRORS → whole run blocked until
+      fixed (all-or-nothing, per user ask). Also disabled the SPA Queue button + added a
+      red "Fix N errored rows before queueing" hint in RunHeader.vue when rows_failed>0
+      (turns click-then-error into a visible blocked state; server stays authoritative).
+      Verified: direct test (scratchpad/test_pairgate.py) — unpaired Transfer → Error,
+      paired legs + External Transfer unaffected, failed_count=1. bench build green.
+      NOT git-committed. RESIDUAL (separate, larger): post_row/post_transfer_pair can still
+      throw an ERPNext submit error at post time (POSTING_ERROR) → partial import; that is
+      not pre-detectable and needs atomic posting (conflicts with current per-N-row commits +
+      live progress) — a design change, not done here.
+    files:
+      - cashew_integration/importer/validation.py  # _validate_single_row guard
+      - frontend/src/components/run-workspace/RunHeader.vue  # Queue button gate + hint
+  - id: p002
+    name: Decouple import state from Validate — stop the "validate is posting" illusion
+    date: 2026-07-05
+    stage: done
+    summary: >
+      User report: "validate is triggering post — it posts the pass rows, not the error
+      rows." No GL is ever created by Validate. Real cause: validate_import ran
+      apply_idempotency_guard, whose _mark_skipped stamps posted_doctype + posted_docname
+      + validation_status=Skipped onto every row matching an already-posted document, and
+      validate_import then PERSISTED those fields. So on Validate, every row overlapping a
+      prior import flipped to "Skipped, posted as JE-xxxx" and rendered as posted — import
+      state bleeding into a pure check. Confirmed on run 000011: 71/75 rows Skipped|posted=Y
+      after a SQLite import that overlapped the earlier CSV run, with 0 new GL from validate.
+      Fix (1 file, api.validate_import): removed the apply_idempotency_guard call and dropped
+      posted_doctype/posted_docname/is_duplicate from the persist loop. Validate now only
+      checks rows + reports errors; it never writes posting state. Duplicates are still
+      surfaced + skipped at queue_run (unchanged, still calls the guard) and re-checked by the
+      worker at post time, so nothing double-posts — correctness intact. Trade-off: the
+      pre-queue duplicate preview moves from Validate to Queue time.
+      Verified: api.py parses; guard now referenced only by queue_run (+ import). Python-only,
+      no rebuild. NOT git-committed.
+    files:
+      - cashew_integration/api.py  # validate_import: no idempotency, no posted-field persist
+  - id: p003
+    name: Decouple state machine — Validate never advances (Option A); explicit arm_import step
+    date: 2026-07-05
+    stage: done
+    summary: >
+      User chose Option A: Validate is a pure check that NEVER advances run status; a separate
+      explicit "Ready to Import" step arms the run; Queue posts. Distinction that resolved the
+      confusion: run status (lifecycle) vs per-row validation_status — validation marks ROWS
+      Error, never a run "error" status; the run just doesn't move.
+      New flow: Draft -parse-> Parsed -(Validate: pure check, stays Parsed)-> fix rows in
+      workbench -> Ready to Import (arm_import) -> Validated -> Queue -> post.
+      Backend (api.py): validate_import no longer db_sets status (returns run.status unchanged);
+      new arm_import(run_name) endpoint = Parsed->Validated, runs config + queue-time row
+      validation + idempotency guard (dup-stamping lives HERE now, as import prep), throws
+      RUN_BLOCKED_BY_ROW_ERRORS if any row errored, throws if 0 valid. queue_run unchanged
+      (still requires Validated, re-validates as backstop) so posting stays airtight; triple
+      idempotency (arm/queue/worker) is harmless.
+      SPA: RunWorkspace routes Parsed->RowsWorkbench (was PreviewSection — retired from switch)
+      so rows are reviewed+fixed BEFORE arming; RowsWorkbench editable at Parsed+Validated;
+      RunHeader Parsed actions = [Re-parse, Discard, Validate, Ready to Import(primary)],
+      Validated = [Re-validate, Queue]; isBlocked disables BOTH arm+queue when rows_failed>0
+      (Validate never blocked); Discard deletes the run + routes to /runs; StateStepper relabeled
+      Preview->"Review & Fix"(Parsed), Workbench->"Import"(Validated+).
+      Desk form (cashew_import_run.js): added _arm_import handler + "Ready to Import" btn at Parsed.
+      Verified end-to-end on a throwaway SQLite run (scratchpad/test_arm_flow.py, June window,
+      auto-deleted, never posted): after parse=Parsed; after validate=Parsed (NO advance) with 0
+      rows stamped posted_docname (NO posting illusion); validate reported 7 errors; arm_import
+      refused (RUN_BLOCKED_BY_ROW_ERRORS) leaving status Parsed. bench build green.
+      NOT git-committed. NOTE: arm happy-path (0 errors -> Validated) not directly exercised
+      (this window had 7 errors) but the guard code is trivial past the blocks. Pre-existing
+      recovery quirk left as-is: Failed/Cancelled 'Re-validate' + Reverted 'Re-queue' call
+      endpoints whose status guards don't include those states (predates this change).
+    files:
+      - cashew_integration/api.py  # validate_import no status advance; new arm_import
+      - frontend/src/pages/RunWorkspace.vue  # Parsed -> RowsWorkbench
+      - frontend/src/components/run-workspace/sections/RowsWorkbench.vue  # editable at Parsed
+      - frontend/src/components/run-workspace/RunHeader.vue  # arm action, discard, block arm+queue
+      - frontend/src/components/run-workspace/StateStepper.vue  # relabel steps
+      - cashew_integration/cashew_integration/doctype/cashew_import_run/cashew_import_run.js  # arm btn
+
+test_requirements:
+  automated: true
+  notes: >
+    Golden test — feed the same set of transactions as both a CSV and a SQLite
+    file; assert identical source_hash per row and identical posting outcomes.

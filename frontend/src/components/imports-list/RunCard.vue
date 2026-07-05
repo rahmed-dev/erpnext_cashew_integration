@@ -25,7 +25,10 @@ function open() { router.push(`/runs/${props.row.name}`); }
         <div class="font-mono text-xs text-gray-900 truncate">{{ row.name }}</div>
         <div class="text-[11px] text-gray-500 truncate">{{ row.company || '—' }}</div>
       </div>
-      <StatusPill kind="run-status" :value="row.status" size="sm" />
+      <div class="flex items-center gap-1.5 shrink-0">
+        <StatusPill v-if="row.source_type" kind="source-type" :value="row.source_type" size="sm" />
+        <StatusPill kind="run-status" :value="row.status" size="sm" />
+      </div>
     </div>
     <div class="text-[12px] text-gray-600">
       <DateRange :start="row.period_start" :end="row.period_end" />

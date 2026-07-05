@@ -73,7 +73,7 @@ const runsResource = createResource({
   makeParams: () => ({
     doctype: 'Cashew Import Run',
     fields: [
-      'name', 'status', 'company',
+      'name', 'status', 'source_type', 'company',
       'period_start', 'period_end',
       'rows_total', 'rows_valid', 'rows_failed', 'rows_posted', 'rows_skipped',
       'modified', 'diagnostics_file',

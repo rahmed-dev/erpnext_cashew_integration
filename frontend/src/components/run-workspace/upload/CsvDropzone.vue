@@ -1,11 +1,13 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { toast } from 'frappe-ui';
 import { Upload, FileText, X } from 'lucide-vue-next';
 
 const props = defineProps({
   modelValue: { type: [String, null], default: null },
   disabled: { type: Boolean, default: false },
+  // f011 c005 — 'CSV' | 'SQLite'. Widens accept + relabels; upload mechanics unchanged.
+  sourceType: { type: String, default: 'CSV' },
 });
 const emit = defineEmits(['update:modelValue']);
 
@@ -13,8 +15,16 @@ const fileInfo = ref(null);
 const hover = ref(false);
 const uploading = ref(false);
 
-const ACCEPT = ['text/csv', 'application/vnd.ms-excel'];
+// CSV MIME set (browsers report these for .csv). SQLite has no reliable MIME, so we
+// widen by EXTENSION (.sql/.sqlite/.db) and add best-effort MIME hints for the picker.
+const ACCEPT_CSV = ['text/csv', 'application/vnd.ms-excel'];
+const ACCEPT_SQLITE = ['.sql', '.sqlite', '.db', 'application/x-sqlite3', 'application/vnd.sqlite3'];
+// 50 MB is ample (a 553-txn Cashew DB is ~KBs). Bump here if a larger backup ever fails.
 const MAX_BYTES = 50 * 1024 * 1024;
+
+const isSqlite = computed(() => props.sourceType === 'SQLite');
+const acceptAttr = computed(() => (isSqlite.value ? ACCEPT_SQLITE : ACCEPT_CSV).join(','));
+const hintCopy = computed(() => (isSqlite.value ? 'SQLite backup up to 50 MB' : 'CSV up to 50 MB'));
 
 function pickFile() {
   if (props.disabled || uploading.value) return;
@@ -24,7 +34,7 @@ function pickFile() {
 async function onFile(file) {
   if (!file) return;
   if (file.size > MAX_BYTES) {
-    toast.error('CSV must be under 50 MB.');
+    toast.error('File must be under 50 MB.');
     return;
   }
   uploading.value = true;
@@ -91,11 +101,11 @@ function clearFile() {
       <div class="text-sm text-gray-700">
         <span class="font-medium text-[var(--cs-accent)]">Click to upload</span> or drag and drop
       </div>
-      <div class="text-xs text-gray-500">CSV up to 50 MB</div>
+      <div class="text-xs text-gray-500">{{ hintCopy }}</div>
       <input
         id="cashew-csv-picker"
         type="file"
-        :accept="ACCEPT.join(',')"
+        :accept="acceptAttr"
         class="hidden"
         @change="onInputChange"
       />

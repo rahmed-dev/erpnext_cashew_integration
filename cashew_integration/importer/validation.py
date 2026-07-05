@@ -88,6 +88,22 @@ def _validate_single_row(row: dict) -> None:
     route   = row.get("resolved_route", "")
     txn_type = row.get("txn_type", "")
 
+    # TRANSFER_PAIR_INCOMPLETE — an internal Transfer leg must have its partner
+    # leg present in this run. An unpaired leg (partner filtered out by the date
+    # window, or living in a different file) otherwise sails through every check
+    # below — the transfer-family bypasses leave it Valid — passes queue_run's
+    # row-error gate, and only fails at POST time when the worker parks it and
+    # never finds the partner. By then the run's other rows have already been
+    # committed (per-N-row commits, not atomic), leaving a half-posted import.
+    # Flag it here so failed_count > 0 and queue_run blocks the WHOLE run until
+    # it's resolved. Mirrors the guard in api.row_explorer_revalidate; External
+    # Transfer / Adjustment post standalone and carry no partner, so are exempt.
+    if txn_type == "Transfer" and not row.get("transfer_pair_row_idx"):
+        _error(row, "TRANSFER_PAIR_INCOMPLETE",
+               "Transfer leg is unpaired — its partner leg is not in this import. "
+               "Widen the date window to include both legs, or exclude this row.")
+        return
+
     # MAPPING_NOT_FOUND — non-Transfer, non-Adjustment rows with no route/account
     if txn_type not in ("Transfer", "External Transfer", "Adjustment"):
         if not route:

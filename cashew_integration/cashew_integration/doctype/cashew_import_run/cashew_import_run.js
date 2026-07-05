@@ -135,6 +135,36 @@ frappe.ui.form.on("Cashew Import Run", {
 		});
 	},
 
+	// ── Ready to Import (arm) ────────────────────────────────────────────────────
+	// Explicit Parsed -> Validated step. Validate is now a pure check that leaves
+	// the run at Parsed (Option A decouple); arming is the deliberate commit and
+	// refuses while any row is in error.
+	_arm_import(frm) {
+		frappe.confirm(
+			__("Arm this import for posting? You still confirm at Queue Run."),
+			() => {
+				frm.call({
+					method: "cashew_integration.api.arm_import",
+					args:   { run_name: frm.doc.name },
+					freeze: true,
+					freeze_message: __("Arming import…"),
+					callback(r) {
+						if (r.message) {
+							frappe.show_alert({
+								message: __(
+									"Ready to import — {0} valid rows. Click Queue Run to post.",
+									[r.message.rows_valid]
+								),
+								indicator: "green",
+							});
+							frm.reload_doc();
+						}
+					},
+				});
+			}
+		);
+	},
+
 	_queue_run(frm) {
 		frappe.confirm(
 			__("Queue this import run? Rows will be posted to ERPNext."),
@@ -198,7 +228,15 @@ function _update_buttons(frm) {
 		}).addClass("btn-warning");
 	}
 
-	// Queue Run: only once Validated
+	// Ready to Import: arm Parsed -> Validated. Explicit commit; Validate no
+	// longer advances the run (Option A decouple). Primary CTA at Parsed.
+	if (s === "Parsed") {
+		frm.add_custom_button(__("Ready to Import"), () => {
+			frm.trigger("_arm_import");
+		}).addClass("btn-primary");
+	}
+
+	// Queue Run: only once armed (Validated)
 	if (s === "Validated") {
 		frm.add_custom_button(__("Queue Run"), () => {
 			frm.trigger("_queue_run");

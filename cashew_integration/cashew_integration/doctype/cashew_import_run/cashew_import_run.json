@@ -9,7 +9,10 @@
  "field_order": [
   "company",
   "section_break_1",
+  "source_type",
   "source_file",
+  "import_from_date",
+  "import_to_date",
   "section_break_3",
   "status",
   "default_customer",
@@ -48,11 +51,34 @@
    "fieldtype": "Section Break"
   },
   {
+   "default": "CSV",
+   "fieldname": "source_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source Type",
+   "options": "CSV\nSQLite",
+   "reqd": 1
+  },
+  {
    "fieldname": "source_file",
    "fieldtype": "Attach",
    "in_list_view": 1,
-   "label": "Source CSV File",
+   "label": "Source File",
    "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.source_type=='SQLite'",
+   "description": "SQLite only. Inclusive lower bound (site-local date). Blank = no lower bound.",
+   "fieldname": "import_from_date",
+   "fieldtype": "Date",
+   "label": "Import From Date"
+  },
+  {
+   "depends_on": "eval:doc.source_type=='SQLite'",
+   "description": "SQLite only. Inclusive upper bound (site-local date). Blank = no upper bound.",
+   "fieldname": "import_to_date",
+   "fieldtype": "Date",
+   "label": "Import To Date"
   },
   {
    "fieldname": "section_break_3",

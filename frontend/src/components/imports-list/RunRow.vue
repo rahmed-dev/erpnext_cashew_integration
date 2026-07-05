@@ -27,7 +27,12 @@ function formatModified(s) {
     @click="open"
   >
     <td class="px-3 py-2.5 font-mono text-xs text-gray-900">{{ row.name }}</td>
-    <td class="px-3 py-2.5"><StatusPill kind="run-status" :value="row.status" size="sm" /></td>
+    <td class="px-3 py-2.5">
+      <div class="flex items-center gap-1.5">
+        <StatusPill kind="run-status" :value="row.status" size="sm" />
+        <StatusPill v-if="row.source_type" kind="source-type" :value="row.source_type" size="sm" />
+      </div>
+    </td>
     <td class="px-3 py-2.5 hidden lg:table-cell text-sm text-gray-700 truncate max-w-[160px]">{{ row.company || '—' }}</td>
     <td class="px-3 py-2.5 text-sm"><DateRange :start="row.period_start" :end="row.period_end" /></td>
     <td class="px-3 py-2.5 text-sm text-right tabular-nums hidden sm:table-cell">{{ row.rows_total ?? '—' }}</td>

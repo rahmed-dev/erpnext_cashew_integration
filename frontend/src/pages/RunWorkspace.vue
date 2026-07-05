@@ -5,7 +5,6 @@ import { useRoute, useRouter } from 'vue-router';
 import RunHeader from '@/components/run-workspace/RunHeader.vue';
 import StateStepper from '@/components/run-workspace/StateStepper.vue';
 import UploadSection from '@/components/run-workspace/sections/UploadSection.vue';
-import PreviewSection from '@/components/run-workspace/sections/PreviewSection.vue';
 import RowsWorkbench from '@/components/run-workspace/sections/RowsWorkbench.vue';
 import CompletedSummary from '@/components/run-workspace/sections/CompletedSummary.vue';
 import SkeletonBlock from '@/components/shared/SkeletonBlock.vue';
@@ -28,8 +27,10 @@ const status = computed(() => doc.value?.status || (runName.value ? null : 'Draf
 
 const sectionComponent = computed(() => {
   if (!runName.value || status.value === 'Draft') return UploadSection;
-  if (status.value === 'Parsed') return PreviewSection;
-  if (['Validated', 'Queued', 'Processing'].includes(status.value)) return RowsWorkbench;
+  // Parsed now hosts the editable workbench too: Validate is a pure check that
+  // leaves the run at Parsed, so rows are reviewed + fixed here BEFORE the
+  // explicit "Ready to Import" arm advances to Validated. (Option A decouple.)
+  if (['Parsed', 'Validated', 'Queued', 'Processing'].includes(status.value)) return RowsWorkbench;
   if (['Completed', 'Failed', 'Cancelled', 'Reverting', 'Reverted', 'Revert-Failed'].includes(status.value)) return CompletedSummary;
   return UploadSection;
 });

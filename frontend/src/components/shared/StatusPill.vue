@@ -1,6 +1,6 @@
 <script setup>
 const props = defineProps({
-  kind: { type: String, required: true }, // 'run-status' | 'row-validation' | 'row-revert' | 'txn-type'
+  kind: { type: String, required: true }, // 'run-status' | 'row-validation' | 'row-revert' | 'txn-type' | 'source-type'
   value: { type: String, required: true },
   size: { type: String, default: 'md' },  // 'sm' | 'md'
   pulse: { type: Boolean, default: false },
@@ -37,6 +37,10 @@ const TABLES = {
     Adjustment:          { label: 'Adjustment',         cls: 'bg-yellow-50 text-yellow-800' },
     'Loan Receivable':   { label: 'Loan Receivable',    cls: 'bg-violet-100 text-violet-700' },
     'Loan Payable':      { label: 'Loan Payable',       cls: 'bg-violet-100 text-violet-700' },
+  },
+  'source-type': {
+    CSV:    { label: 'CSV',    cls: 'bg-gray-100 text-gray-700' },
+    SQLite: { label: 'SQLite', cls: 'bg-indigo-100 text-indigo-700' },
   },
 };
 

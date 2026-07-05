@@ -6,8 +6,8 @@ features:
     priority: high
   - id: f002
     name: Cashew Automated Sync
-    status: cancelled
-    stage: not-started
+    status: backlog
+    stage: arch-done
     priority: medium
   - id: f003
     name: Validation Pipeline Improvements
@@ -46,6 +46,11 @@ features:
     priority: medium
   - id: f010
     name: Cashew Frontend SPA (Runs + Dashboard)
+    status: done
+    stage: done
+    priority: high
+  - id: f011
+    name: Cashew SQL (SQLite) Import
     status: done
     stage: done
     priority: high

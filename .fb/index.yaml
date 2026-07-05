@@ -51,3 +51,8 @@ features:
     name: Cashew Frontend SPA (Runs + Dashboard)
     status: backlog
     stage: not-started
+  - id: f011
+    slug: cashew-sql-import
+    name: Cashew SQL (SQLite) Import
+    status: in-progress
+    stage: specced

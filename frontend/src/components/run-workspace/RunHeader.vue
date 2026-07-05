@@ -30,10 +30,16 @@ const RUN_ACTIONS = {
     { id: 'parse',   label: 'Parse',         primary: true,  method: 'parse_and_preview' },
   ],
   Parsed: [
-    { id: 'validate', label: 'Validate',     primary: true,  method: 'validate_import' },
+    { id: 'reparse',  label: 'Re-parse',       method: 'parse_and_preview' },
+    { id: 'discard',  label: 'Discard',        danger: true, deletes: true,
+      confirmText: 'Discard this run? This permanently deletes it and its parsed rows.' },
+    { id: 'validate', label: 'Validate',       method: 'validate_import' },
+    { id: 'arm',      label: 'Ready to Import', primary: true, method: 'arm_import',
+      confirmText: 'Arm this import for posting? You still confirm at Queue.' },
   ],
   Validated: [
-    { id: 'queue',    label: 'Queue',        primary: true,  method: 'queue_run',
+    { id: 'validate', label: 'Re-validate',    method: 'validate_import' },
+    { id: 'queue',    label: 'Queue',          primary: true,  method: 'queue_run',
       confirmText: 'Queue this import? Posting will start.' },
   ],
   Queued: [
@@ -61,8 +67,19 @@ const RUN_ACTIONS = {
 
 const actions = computed(() => RUN_ACTIONS[status.value] || []);
 
+const rowsFailed = computed(() => Number(props.doc?.rows_failed || 0));
+
+// Arming ("Ready to Import") and Queue both commit toward posting; the backend
+// refuses while any row is in error (RUN_BLOCKED_BY_ROW_ERRORS). Surface that
+// block here so the button reads as disabled instead of erroring on click —
+// every errored row must be fixed first (all-or-nothing). Validate itself is
+// never blocked: it is a pure check that reports the errors.
+function isBlocked(action) {
+  return ['queue_run', 'arm_import'].includes(action.method) && rowsFailed.value > 0;
+}
+
 async function runAction(action) {
-  if (!props.runName || busy.value) return;
+  if (!props.runName || busy.value || isBlocked(action)) return;
   if (action.confirmText) {
     const ok = await openConfirm({
       title: action.label,
@@ -74,6 +91,17 @@ async function runAction(action) {
   }
   busy.value = action.id;
   try {
+    // Discard deletes the run outright, then leaves the workspace.
+    if (action.deletes) {
+      await frappeRequest({
+        url: 'frappe.client.delete',
+        method: 'POST',
+        params: { doctype: 'Cashew Import Run', name: props.runName },
+      });
+      toast.success('Run discarded.');
+      router.push('/runs');
+      return;
+    }
     await frappeRequest({
       url: `cashew_integration.api.${action.method}`,
       method: 'POST',
@@ -121,6 +149,7 @@ function openInDesk() {
         {{ runName || '(new import)' }}
       </span>
       <StatusPill v-if="status" kind="run-status" :value="status" />
+      <StatusPill v-if="doc?.source_type" kind="source-type" :value="doc.source_type" size="sm" />
       <span
         v-if="inFlight"
         class="inline-flex items-center gap-1 text-[11px] text-gray-600"
@@ -159,13 +188,17 @@ function openInDesk() {
         </template>
       </div>
       <div class="flex items-center gap-2">
+        <span v-if="rowsFailed > 0" class="text-xs text-red-700">
+          Fix {{ rowsFailed }} errored row{{ rowsFailed === 1 ? '' : 's' }} before importing.
+        </span>
         <Button
           v-for="a in actions"
           :key="a.id"
           :variant="a.primary ? 'solid' : 'subtle'"
           :theme="a.danger ? 'red' : (a.primary ? 'gray' : 'gray')"
           :loading="busy === a.id"
-          :disabled="!!busy"
+          :disabled="!!busy || isBlocked(a)"
+          :title="isBlocked(a) ? 'Import is blocked until every errored row is fixed.' : undefined"
           @click="runAction(a)"
         >
           {{ a.label }}

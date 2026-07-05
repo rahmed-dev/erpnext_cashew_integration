@@ -4,10 +4,12 @@ import { Check } from 'lucide-vue-next';
 import { useIsMobile } from '@/state/useIsMobile';
 
 const STEPS = [
-  { id: 'upload',    label: 'Upload',    statuses: ['Draft'] },
-  { id: 'preview',   label: 'Preview',   statuses: ['Parsed'] },
-  { id: 'workbench', label: 'Workbench', statuses: ['Validated', 'Queued', 'Processing'] },
-  { id: 'done',      label: 'Done',      statuses: ['Completed', 'Failed', 'Cancelled', 'Reverting', 'Reverted', 'Revert-Failed'] },
+  { id: 'upload',    label: 'Upload',        statuses: ['Draft'] },
+  // Parsed hosts the editable workbench now — review + Validate + fix all happen
+  // here before the explicit "Ready to Import" arm (Option A decouple).
+  { id: 'review',    label: 'Review & Fix',  statuses: ['Parsed'] },
+  { id: 'import',    label: 'Import',        statuses: ['Validated', 'Queued', 'Processing'] },
+  { id: 'done',      label: 'Done',          statuses: ['Completed', 'Failed', 'Cancelled', 'Reverting', 'Reverted', 'Revert-Failed'] },
 ];
 
 const props = defineProps({ status: { type: [String, null], default: null } });
