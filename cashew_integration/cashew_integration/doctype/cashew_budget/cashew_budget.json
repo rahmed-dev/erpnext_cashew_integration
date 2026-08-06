@@ -1,0 +1,192 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:budget_pk",
+ "creation": "2026-08-07 10:00:00",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "budget_name",
+  "company",
+  "budget_pk",
+  "column_break_1",
+  "amount",
+  "is_income",
+  "disabled",
+  "section_break_cycle",
+  "start_date",
+  "reoccurrence",
+  "period_length",
+  "column_break_2",
+  "is_archived",
+  "is_pinned",
+  "source_run",
+  "section_break_scope",
+  "scope_html",
+  "budget_accounts",
+  "excluded_categories",
+  "budget_wallets"
+ ],
+ "fields": [
+  {
+   "fieldname": "budget_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Budget Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "description": "Cashew's own primary key. Opaque string - never parsed as a UUID, because seeded Cashew records use small integer strings.",
+   "fieldname": "budget_pk",
+   "fieldtype": "Data",
+   "label": "Cashew Budget PK",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount"
+  },
+  {
+   "description": "A savings goal rather than a spending limit.",
+   "fieldname": "is_income",
+   "fieldtype": "Check",
+   "label": "Is Income Goal"
+  },
+  {
+   "description": "Excluded from the dashboard. Set from Cashew's archived flag on every import - a manual change here is overwritten by the next import.",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "fieldname": "section_break_cycle",
+   "fieldtype": "Section Break",
+   "label": "Cycle"
+  },
+  {
+   "description": "The recurrence ANCHOR, not the first cycle's start. Cashew's end_date ends the first period only and is deliberately not imported.",
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reoccurrence",
+   "fieldtype": "Select",
+   "label": "Reoccurrence",
+   "options": "Daily\nWeekly\nMonthly\nYearly\nCustom",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "period_length",
+   "fieldtype": "Int",
+   "label": "Period Length"
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "is_archived",
+   "fieldtype": "Check",
+   "label": "Archived in Cashew",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_pinned",
+   "fieldtype": "Check",
+   "label": "Pinned in Cashew",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_run",
+   "fieldtype": "Link",
+   "label": "Last Imported By",
+   "options": "Cashew Import Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_scope",
+   "fieldtype": "Section Break",
+   "label": "Scope"
+  },
+  {
+   "fieldname": "scope_html",
+   "fieldtype": "HTML",
+   "options": "<p class=\"text-muted small\">Scope is resolved from the Cashew Category Mapping and Cashew Account Mapping at import time and rewritten on every import. Edit the mappings, then re-import, rather than editing these tables.</p>"
+  },
+  {
+   "fieldname": "budget_accounts",
+   "fieldtype": "Table",
+   "label": "Category Scope",
+   "options": "Cashew Budget Account"
+  },
+  {
+   "fieldname": "excluded_categories",
+   "fieldtype": "Table",
+   "label": "Excluded Categories",
+   "options": "Cashew Budget Exclude Category"
+  },
+  {
+   "fieldname": "budget_wallets",
+   "fieldtype": "Table",
+   "label": "Wallet Scope",
+   "options": "Cashew Budget Wallet"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-07 10:00:00",
+ "modified_by": "Administrator",
+ "module": "Cashew Integration",
+ "name": "Cashew Budget",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accountant"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "budget_name",
+ "track_changes": 1
+}

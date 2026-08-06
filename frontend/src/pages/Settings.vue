@@ -10,6 +10,7 @@ import ConfirmDialog from '@/components/shared/ConfirmDialog.vue';
 import AppearanceSection from '@/components/settings/AppearanceSection.vue';
 import DefaultsSection from '@/components/settings/DefaultsSection.vue';
 import MappingsSection from '@/components/settings/MappingsSection.vue';
+import BudgetsSection from '@/components/settings/BudgetsSection.vue';
 import SaveBar from '@/components/settings/SaveBar.vue';
 import ReadOnlyBanner from '@/components/settings/ReadOnlyBanner.vue';
 
@@ -206,6 +207,14 @@ onBeforeRouteLeave(async (to, from, next) => {
       />
 
       <MappingsSection class="mt-6" />
+
+      <!-- Below Mappings deliberately: a budget only imports once its scope is
+           mapped, so the section that fixes a skipped budget sits directly above. -->
+      <BudgetsSection
+        :company="state.form.company"
+        :disabled="!canWrite"
+        class="mt-6"
+      />
     </template>
 
     <SaveBar

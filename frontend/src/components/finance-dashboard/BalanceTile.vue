@@ -16,6 +16,10 @@ const props = defineProps({
   invert: { type: Boolean, default: false },
   clickable: { type: Boolean, default: false },
   breakdown: { type: [Object, null], default: null },
+  // f012 c003 — a short line under the figure ("12 invoices"). The KPI tiles
+  // carry a volume alongside their value, and a second tile for the count would
+  // be a parallel card system for one number.
+  caption: { type: String, default: '' },
 });
 const emit = defineEmits(['click']);
 
@@ -117,6 +121,7 @@ function subOf(it) {
     <SkeletonBlock v-if="loading" class="h-7 mt-1 w-2/3" />
     <div v-else class="mt-1">
       <AmountDisplay :amount="amount" :currency="currency" big />
+      <div v-if="caption" class="text-xs text-gray-500 mt-0.5">{{ caption }}</div>
     </div>
 
     <Teleport to="body">

@@ -1,0 +1,55 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-08-07 10:00:00",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "cashew_category",
+  "cashew_sub_category",
+  "account",
+  "category_pk"
+ ],
+ "fields": [
+  {
+   "fieldname": "cashew_category",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cashew Category"
+  },
+  {
+   "fieldname": "cashew_sub_category",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cashew Sub Category"
+  },
+  {
+   "description": "Excluded from the budget scope. Recorded for traceability - an excluded category is already absent from Cashew Budget Account, which is what the figure is measured on.",
+   "fieldname": "account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "category_pk",
+   "fieldtype": "Data",
+   "label": "Cashew Category PK",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-07 10:00:00",
+ "modified_by": "Administrator",
+ "module": "Cashew Integration",
+ "name": "Cashew Budget Exclude Category",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

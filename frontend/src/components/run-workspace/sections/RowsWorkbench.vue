@@ -10,6 +10,7 @@ import SelectionFooter from '@/components/run-workspace/workbench/SelectionFoote
 import InlineRowDrawer from '@/components/run-workspace/workbench/InlineRowDrawer.vue';
 import ValidationFixModal from '@/components/run-workspace/workbench/ValidationFixModal.vue';
 import BulkPartyModal from '@/components/run-workspace/workbench/BulkPartyModal.vue';
+import UnmappedResolverPanel from '@/components/run-workspace/sections/UnmappedResolverPanel.vue';
 
 import { COLUMN_PRESETS, pickInitialPreset } from '@/components/run-workspace/workbench/registries/columns';
 import { applyFilters } from '@/components/run-workspace/workbench/registries/filters';
@@ -45,7 +46,13 @@ watch(() => state.preset, (p) => {
   state.visibleColumns = COLUMN_PRESETS[p] ? [...COLUMN_PRESETS[p]] : state.visibleColumns;
 }, { immediate: false });
 
+// Bumped on every row reload so the unmapped-entity panel re-reads its list —
+// a mapping added on Desk in another tab then disappears from the panel without
+// a page refresh.
+const rowsRevision = ref(0);
+
 watch(() => props.rows, () => {
+  rowsRevision.value += 1;
   for (const idx of [...state.selected]) {
     if (!props.rows.some((r) => r.row_idx === idx)) state.selected.delete(idx);
   }
@@ -172,6 +179,12 @@ function markRecentPatch(idx) {
 
 <template>
   <div class="space-y-3">
+    <UnmappedResolverPanel
+      v-if="editable"
+      :run-name="runName"
+      :reload-key="rowsRevision"
+      @resolved="emit('reload')"
+    />
     <WorkbenchToolbar
       :search="state.search"
       :filters="state.filters"

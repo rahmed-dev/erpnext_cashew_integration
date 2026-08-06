@@ -1,239 +1,200 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref, defineAsyncComponent } from 'vue';
+// f012 c004 — Income vs Expense trend.
+//
+// This component started life as the ApexCharts donut, was ported to ECharts in
+// c001, and c004 collapses that port into the trend chart: two totals in a ring
+// said nothing the KPI tiles (c003) do not now say better, while the shape of
+// the period — which months earned, which months bled — was invisible.
+//
+// Income is drawn above the axis, expense below, on one stack so they meet at
+// zero, with net as a line. Reading it is then a single question: is the line
+// above the axis.
+//
+// It deliberately shows NO period total in its header. `series.totals` NETS
+// reversing postings inside a bucket where the `income_total` / `expense_total`
+// scalars behind the KPI tiles clamp each GL row at zero, so the two can differ
+// legitimately. Putting one of them next to the other on the same screen would
+// present a reconciliation problem as a contradiction. The footnote below names
+// the difference instead, when there is one.
+import { computed } from 'vue';
+import CsChart from '@/components/shared/CsChart.vue';
 import AmountDisplay from '@/components/shared/AmountDisplay.vue';
-
-// Local ASYNC registration, not a global app.component in main.js. apexcharts is
-// ~450 kB and this is the only component that draws one — a static import would
-// anchor it in the entry chunk and every route would pay for it at first paint.
-// The `hasData` guard below means the import is not even requested when the
-// dashboard has nothing to plot.
-const apexchart = defineAsyncComponent(() => import('vue3-apexcharts'));
+import {
+  SEMANTIC, CHROME, alpha, alphaToken, accent,
+  moneyAxis, categoryAxis, moneyFormatters, tooltipRow, tooltipTitle,
+} from '@/charts/theme';
 
 const props = defineProps({
+  // `dashboard_summary.series` — {granularity, buckets, income[], expense[], totals}
+  series: { type: [Object, null], default: null },
+  // The scalars behind the KPI tiles, for the reconciliation footnote only.
   income: { type: [Number, null], default: 0 },
   expense: { type: [Number, null], default: 0 },
-  incomeBy: { type: Array, default: () => [] },
-  expenseBy: { type: Array, default: () => [] },
   currency: { type: String, default: 'PKR' },
-  period: { type: Object, default: () => ({}) },
 });
 
-const net = computed(() => (props.income || 0) - (props.expense || 0));
+const buckets = computed(() => props.series?.buckets || []);
+const incomeValues = computed(() => props.series?.income || []);
+const expenseValues = computed(() => props.series?.expense || []);
+const isDaily = computed(() => props.series?.granularity === 'daily');
 
-const series = computed(() => [
-  Math.max(props.income || 0, 0),
-  Math.max(props.expense || 0, 0),
-]);
+const hasData = computed(() =>
+  buckets.value.length > 0 &&
+  [...incomeValues.value, ...expenseValues.value].some((v) => Math.abs(v || 0) > 0.005),
+);
 
-const accent = ref({ income: '#4f46e5', expense: '#334155' });
+const netValues = computed(() =>
+  buckets.value.map((_b, i) => (incomeValues.value[i] || 0) - (expenseValues.value[i] || 0)),
+);
 
-function readAccents() {
-  if (typeof window === 'undefined') return;
-  const cs = getComputedStyle(document.documentElement);
-  const primary = cs.getPropertyValue('--cs-accent').trim() || '#4f46e5';
-  accent.value = { income: primary, expense: '#334155' };
+const chartedIncome = computed(() => props.series?.totals?.income ?? 0);
+const chartedExpense = computed(() => props.series?.totals?.expense ?? 0);
+
+/**
+ * The scalars clamp each GL row at zero; the series nets. They diverge exactly
+ * when an income or expense account carries a reversing posting inside the
+ * period, and that divergence is worth saying out loud — a chart that quietly
+ * adds up to a different number than the tile above it reads as a bug.
+ */
+const reconciliation = computed(() => {
+  const diffs = [];
+  if (Math.abs(chartedIncome.value - (props.income || 0)) > 0.01) {
+    diffs.push({ label: 'income', charted: chartedIncome.value, booked: props.income || 0 });
+  }
+  if (Math.abs(chartedExpense.value - (props.expense || 0)) > 0.01) {
+    diffs.push({ label: 'expense', charted: chartedExpense.value, booked: props.expense || 0 });
+  }
+  return diffs;
+});
+
+/** ISO dates are unreadable stacked on a daily axis; months already read fine. */
+function axisLabel(bucket) {
+  if (!isDaily.value) return bucket.label;
+  const d = new Date(`${bucket.key}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? bucket.label
+    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
-const themeObserver = ref(null);
-onMounted(() => {
-  readAccents();
-  themeObserver.value = new MutationObserver(readAccents);
-  themeObserver.value.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['style'],
-  });
-});
-onBeforeUnmount(() => {
-  themeObserver.value?.disconnect();
-});
+const option = computed(() => {
+  const { money, compact } = moneyFormatters(props.currency);
+  const rows = buckets.value;
 
-// Hover state — driven by ApexCharts dataPointMouseEnter / dataPointMouseLeave.
-// null = nothing hovered, 0 = income slice, 1 = expense slice.
-const hoverIdx = ref(null);
-const cursor = ref({ x: 0, y: 0 });
-const chartWrap = ref(null);
-
-function onChartMove(e) {
-  if (!chartWrap.value) return;
-  const rect = chartWrap.value.getBoundingClientRect();
-  cursor.value = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-}
-
-// Floating tooltip placement: prefer right of cursor, flip left near right edge.
-// Vertically clamp inside the wrapper.
-const tooltipStyle = computed(() => {
-  const PAD = 12;
-  const W = 260;
-  const wrap = chartWrap.value;
-  const wrapW = wrap?.clientWidth || 400;
-  const wrapH = wrap?.clientHeight || 280;
-  let left = cursor.value.x + PAD;
-  if (left + W > wrapW - 4) left = Math.max(4, cursor.value.x - W - PAD);
-  // estimate panel height ~ 220, clamp y so it fits
-  const H = 220;
-  let top = cursor.value.y + PAD;
-  if (top + H > wrapH - 4) top = Math.max(4, wrapH - H - 4);
-  return { left: `${left}px`, top: `${top}px`, width: `${W}px` };
-});
-
-const chartOptions = computed(() => ({
-  chart: {
-    type: 'donut',
-    fontFamily: 'inherit',
-    toolbar: { show: false },
-    animations: { enabled: true, speed: 350 },
-    events: {
-      dataPointMouseEnter: (_e, _ctx, cfg) => {
-        if (cfg && typeof cfg.dataPointIndex === 'number') hoverIdx.value = cfg.dataPointIndex;
-      },
-      dataPointMouseLeave: () => {
-        hoverIdx.value = null;
+  return {
+    grid: { top: 16, right: 12, bottom: 24, left: 8, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow', shadowStyle: { color: alphaToken('--cs-accent', 0.07) } },
+      formatter: (params) => {
+        if (!params?.length) return '';
+        const i = params[0].dataIndex;
+        const b = rows[i] || {};
+        const inc = incomeValues.value[i] || 0;
+        const exp = expenseValues.value[i] || 0;
+        return (
+          tooltipTitle(b.label || b.key || '') +
+          tooltipRow(dot(SEMANTIC.income), 'Income', money(inc)) +
+          tooltipRow(dot(SEMANTIC.expense), 'Expense', money(exp)) +
+          `<div style="height:1px;background:${CHROME.border};margin:6px 0"></div>` +
+          tooltipRow(dot(accent().base), 'Net', money(inc - exp))
+        );
       },
     },
-  },
-  labels: ['Income', 'Expense'],
-  colors: [accent.value.income, accent.value.expense],
-  stroke: { width: 2, colors: ['#ffffff'] },
-  legend: { show: false },
-  dataLabels: { enabled: false },
-  plotOptions: {
-    pie: {
-      donut: {
-        size: '68%',
-        labels: { show: false },
-      },
+    legend: {
+      show: true,
+      bottom: 0,
+      itemWidth: 8,
+      itemHeight: 8,
+      icon: 'circle',
+      textStyle: { color: CHROME.textMuted, fontSize: 11 },
+      data: ['Income', 'Expense', 'Net'],
     },
-  },
-  tooltip: { enabled: false },
-  states: { hover: { filter: { type: 'lighten', value: 0.06 } } },
-}));
-
-const hasData = computed(() => (props.income || 0) + (props.expense || 0) > 0);
-const isPositive = computed(() => net.value >= 0);
-
-const hoverMeta = computed(() => {
-  if (hoverIdx.value === 0) {
-    return {
-      label: 'Income',
-      color: accent.value.income,
-      total: props.income || 0,
-      rows: (props.incomeBy || []).filter((r) => r.account !== '(Other)'),
-    };
-  }
-  if (hoverIdx.value === 1) {
-    return {
-      label: 'Expense',
-      color: accent.value.expense,
-      total: props.expense || 0,
-      rows: (props.expenseBy || []).filter((r) => r.account !== '(Other)'),
-    };
-  }
-  return null;
+    xAxis: categoryAxis(rows.map(axisLabel), {
+      axisLabel: {
+        color: CHROME.axis,
+        fontSize: 10,
+        // A daily period can run to 92 buckets; let ECharts thin the labels
+        // rather than rotating them into an unreadable comb.
+        hideOverlap: true,
+      },
+    }),
+    // Expense is plotted below the axis, so the axis formatter must not show a
+    // minus on it — the colour and the side already say which is which.
+    yAxis: moneyAxis(props.currency, {
+      axisLabel: {
+        color: CHROME.axis,
+        fontSize: 10,
+        formatter: (v) => compact(Math.abs(v)),
+      },
+    }),
+    series: [
+      {
+        name: 'Income',
+        type: 'bar',
+        stack: 'flow',
+        barMaxWidth: 28,
+        itemStyle: { color: SEMANTIC.income, borderRadius: [3, 3, 0, 0] },
+        data: incomeValues.value.map((v) => v || 0),
+      },
+      {
+        name: 'Expense',
+        type: 'bar',
+        stack: 'flow',
+        barMaxWidth: 28,
+        itemStyle: { color: SEMANTIC.expense, borderRadius: [0, 0, 3, 3] },
+        // Negated for placement only; every label and tooltip reports the
+        // positive figure the ledger actually holds.
+        data: expenseValues.value.map((v) => -(v || 0)),
+      },
+      {
+        name: 'Net',
+        type: 'line',
+        smooth: false,
+        symbol: 'circle',
+        symbolSize: rows.length > 40 ? 0 : 5,
+        lineStyle: { width: 2, color: accent().base },
+        itemStyle: { color: accent().base },
+        areaStyle: { color: alpha(accent().base, 0.06) },
+        z: 3,
+        data: netValues.value,
+      },
+    ],
+  };
 });
 
-const hoverRowsToShow = computed(() => {
-  const meta = hoverMeta.value;
-  if (!meta) return [];
-  const top = meta.rows.slice(0, 5);
-  const tail = meta.rows.slice(5);
-  if (tail.length) {
-    const sum = tail.reduce((s, x) => s + (x.amount || 0), 0);
-    top.push({ account: `+ ${tail.length} more`, amount: sum, _tail: true });
-  }
-  return top;
-});
-
-function pct(amount, total) {
-  if (!total) return 0;
-  return Math.round((Math.abs(amount || 0) / total) * 100);
+function dot(color) {
+  return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px"></span>`;
 }
 </script>
 
 <template>
   <div class="rounded-lg border border-gray-200 bg-white p-5">
-    <header class="mb-3 flex items-start justify-between gap-3">
-      <div>
-        <h3 class="text-sm font-semibold text-gray-900">Income vs Expense</h3>
-        <p class="text-xs text-gray-500">Hover a slice for top-account breakdown</p>
-      </div>
-      <div class="text-right">
-        <div class="text-[10px] uppercase tracking-wide text-gray-500">Net</div>
-        <div :class="['text-lg font-semibold tabular-nums', isPositive ? 'text-[var(--cs-accent-700)]' : 'text-gray-700']">
-          <AmountDisplay :amount="net" :currency="currency" :signed="true" />
-        </div>
-      </div>
+    <header class="mb-3">
+      <h3 class="text-sm font-semibold text-gray-900">Income vs Expense</h3>
+      <p class="text-xs text-gray-500">
+        {{ isDaily ? 'Daily' : 'Monthly' }} — expense below the axis, net as the line
+      </p>
     </header>
 
-    <div v-if="hasData" class="relative">
-      <div
-        ref="chartWrap"
-        class="-mt-2 relative"
-        @mousemove="onChartMove"
-        @mouseleave="hoverIdx = null"
-      >
-        <apexchart
-          type="donut"
-          height="240"
-          :options="chartOptions"
-          :series="series"
-        />
+    <CsChart
+      :option="option"
+      :has-data="hasData"
+      :height="260"
+      aria-label="Income and expense per period with net line"
+      empty-text="No income or expense posted this period."
+    />
 
-        <!-- Floating breakdown panel beside cursor -->
-        <div
-          v-if="hoverMeta"
-          class="absolute z-20 rounded-lg border border-gray-200 bg-white shadow-lg p-3 pointer-events-none"
-          :style="tooltipStyle"
-        >
-          <div class="flex items-center justify-between gap-3 mb-2 pb-2 border-b border-gray-100">
-            <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-700">
-              <span class="w-2 h-2 rounded-full" :style="`background:${hoverMeta.color}`" />
-              {{ hoverMeta.label }}
-            </span>
-            <span class="text-xs font-semibold tabular-nums text-gray-900">
-              <AmountDisplay :amount="hoverMeta.total" :currency="currency" />
-            </span>
-          </div>
-          <div class="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Top accounts</div>
-          <ul v-if="hoverRowsToShow.length" class="space-y-1">
-            <li
-              v-for="(r, i) in hoverRowsToShow"
-              :key="i"
-              class="flex items-center justify-between text-xs gap-2"
-            >
-              <span :class="['truncate min-w-0', r._tail ? 'text-gray-500 italic' : 'text-gray-700']">
-                {{ r.account }}
-              </span>
-              <span class="shrink-0 inline-flex items-baseline gap-1.5 tabular-nums">
-                <AmountDisplay :amount="r.amount" :currency="currency" class="text-gray-900" />
-                <span class="text-[10px] text-gray-400">· {{ pct(r.amount, hoverMeta.total) }}%</span>
-              </span>
-            </li>
-          </ul>
-          <p v-else class="text-xs text-gray-400 italic">No accounts.</p>
-        </div>
-      </div>
-
-      <!-- Always-on legend + totals below chart -->
-      <div class="mt-3 grid grid-cols-2 gap-3 text-xs">
-        <div class="flex flex-col items-start">
-          <span class="inline-flex items-center gap-1.5 text-gray-600">
-            <span class="w-2.5 h-2.5 rounded-full" :style="`background:${accent.income}`" />
-            Income
-          </span>
-          <AmountDisplay :amount="income" :currency="currency" class="mt-0.5 font-medium text-gray-900" />
-        </div>
-        <div class="flex flex-col items-start">
-          <span class="inline-flex items-center gap-1.5 text-gray-600">
-            <span class="w-2.5 h-2.5 rounded-full" :style="`background:${accent.expense}`" />
-            Expense
-          </span>
-          <AmountDisplay :amount="expense" :currency="currency" class="mt-0.5 font-medium text-gray-900" />
-        </div>
-      </div>
-    </div>
-
-    <div v-else class="py-10 text-center text-xs text-gray-400 italic">
-      No income or expense posted this period.
-    </div>
+    <p
+      v-for="d in reconciliation"
+      :key="d.label"
+      class="mt-2 text-[11px] leading-snug text-gray-500"
+    >
+      Charted {{ d.label }}
+      <AmountDisplay :amount="d.charted" :currency="currency" class="text-gray-700" />
+      against
+      <AmountDisplay :amount="d.booked" :currency="currency" class="text-gray-700" />
+      booked — the bars net reversing postings within a period, the tile above counts
+      each posting as it stands.
+    </p>
   </div>
 </template>

@@ -11,6 +11,13 @@ import CompanySelector from '@/components/finance-dashboard/CompanySelector.vue'
 import BalanceTileGrid from '@/components/finance-dashboard/BalanceTileGrid.vue';
 import BalanceDetailModal from '@/components/finance-dashboard/BalanceDetailModal.vue';
 import IncomeExpenseChart from '@/components/finance-dashboard/IncomeExpenseChart.vue';
+import NetWorthChart from '@/components/finance-dashboard/NetWorthChart.vue';
+import AccountBalanceChart from '@/components/finance-dashboard/AccountBalanceChart.vue';
+import ExpenseTreemapChart from '@/components/finance-dashboard/ExpenseTreemapChart.vue';
+import SpendHeatmapChart from '@/components/finance-dashboard/SpendHeatmapChart.vue';
+import MoneyFlowSankey from '@/components/finance-dashboard/MoneyFlowSankey.vue';
+import SavingsGoalCard from '@/components/finance-dashboard/SavingsGoalCard.vue';
+import BudgetVsActualCard from '@/components/finance-dashboard/BudgetVsActualCard.vue';
 import CategoryBreakdownCard from '@/components/finance-dashboard/CategoryBreakdownCard.vue';
 import AssetBreakdownCard from '@/components/finance-dashboard/AssetBreakdownCard.vue';
 import RecentImportsStrip from '@/components/finance-dashboard/RecentImportsStrip.vue';
@@ -19,6 +26,7 @@ import DashboardEmptyState from '@/components/finance-dashboard/DashboardEmptySt
 import { useCashewSettings, useDefaultPeriod } from '@/boot';
 import { subscribeList } from '@/realtime';
 import { resolvePeriodRange } from '@/utils/period';
+import { selectBudgets } from '@/utils/budget';
 
 const router = useRouter();
 const initialPeriod = resolvePeriodRange('this-month') || useDefaultPeriod();
@@ -82,6 +90,15 @@ const isEmpty = computed(() => {
     && tilesAllZero
     && (d.recent_runs?.length || 0) === 0;
 });
+
+// The goals section is dropped entirely, heading and all, when Cashew carries
+// no usable budget — a section title over two blank cards reads as a surface
+// that failed to load. Both cards apply the same filter internally.
+const budgetCycles = computed(() => summary.data?.budget_cycles || []);
+const hasBudgets = computed(() =>
+  selectBudgets(budgetCycles.value, { income: true }).length > 0
+  || selectBudgets(budgetCycles.value, { income: false }).length > 0,
+);
 
 let unsubList = null;
 let realtimeTimer = null;
@@ -147,36 +164,113 @@ function onTileClick(tileId) {
         :data="summary.data.balance_tiles"
         :currency="summary.data.currency"
         :breakdowns="tileBreakdowns"
+        :expense="summary.data.expense_total"
+        :invoices="summary.data.invoices"
         @tile-click="onTileClick"
       />
 
-      <div class="grid lg:grid-cols-2 gap-4 mt-4">
-        <IncomeExpenseChart
-          :income="summary.data.income_total"
-          :expense="summary.data.expense_total"
-          :income-by="summary.data.income_by_account || []"
-          :expense-by="summary.data.expense_by_account || []"
-          :currency="summary.data.currency"
-          :period="summary.data.period"
-        />
-        <CategoryBreakdownCard
-          :income-by="summary.data.income_by_account"
-          :expense-by="summary.data.expense_by_account"
-          :currency="summary.data.currency"
-        />
-      </div>
+      <!--
+        c011 — the dashboard is FOUR named sections, not one undifferentiated
+        scroll of cards. Eight charts in a row all look equally important and
+        the reader has no way in; a heading tells them which question each
+        stretch answers, and lets them skip the ones they are not asking.
+        The order is the order the questions arrive in: what do I have, how did
+        it move, where did it go, am I inside my own targets.
 
-      <AssetBreakdownCard
-        :items="summary.data.assets_by_account || []"
-        class="mt-4"
-      />
+        Every row is `grid lg:grid-cols-2` — ONE column below the lg breakpoint,
+        not a shrunken desktop grid (f010 D2.c). Nothing here relies on a
+        neighbour being beside it rather than above it.
+      -->
+      <section class="mt-8">
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Trends</h2>
+        <p class="text-xs text-gray-400 mt-0.5">How income and balances moved over the period</p>
 
-      <RecentImportsStrip
-        :runs="summary.data.recent_runs"
-        class="mt-4"
-        @open="(run) => router.push(`/runs/${run.name}`)"
-        @new-import="router.push('/runs/new')"
-      />
+        <div class="grid lg:grid-cols-2 gap-4 mt-3">
+          <IncomeExpenseChart
+            :series="summary.data.series"
+            :income="summary.data.income_total"
+            :expense="summary.data.expense_total"
+            :currency="summary.data.currency"
+          />
+          <CategoryBreakdownCard
+            :income-by="summary.data.income_by_account"
+            :expense-by="summary.data.expense_by_account"
+            :currency="summary.data.currency"
+          />
+        </div>
+
+        <!-- Balance-sheet pair: the net total on the left, the accounts it is
+             made of on the right. -->
+        <div class="grid lg:grid-cols-2 gap-4 mt-4">
+          <NetWorthChart
+            :series="summary.data.series"
+            :currency="summary.data.currency"
+          />
+          <AccountBalanceChart
+            :series="summary.data.series"
+            :currency="summary.data.currency"
+          />
+        </div>
+      </section>
+
+      <section class="mt-8">
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Where it went</h2>
+        <p class="text-xs text-gray-400 mt-0.5">The same spending by category, by day, and by route</p>
+
+        <!-- Expense pair: the composition of the spending on the left, its
+             distribution over time on the right. -->
+        <div class="grid lg:grid-cols-2 gap-4 mt-3">
+          <ExpenseTreemapChart
+            :series="summary.data.series"
+            :currency="summary.data.currency"
+          />
+          <SpendHeatmapChart
+            :days="summary.data.daily_spend || []"
+            :currency="summary.data.currency"
+          />
+        </div>
+
+        <!-- Full width, alone: the sankey carries three columns of labels and
+             is the one chart here that is unreadable at half the page. -->
+        <MoneyFlowSankey
+          :flow="summary.data.money_flow"
+          :currency="summary.data.currency"
+          class="mt-4"
+        />
+      </section>
+
+      <section v-if="hasBudgets" class="mt-8">
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Goals and limits</h2>
+        <p class="text-xs text-gray-400 mt-0.5">Against the budgets set in Cashew, on their own cycles</p>
+
+        <div class="grid lg:grid-cols-2 gap-4 mt-3 items-start">
+          <SavingsGoalCard
+            :cycles="summary.data.budget_cycles || []"
+            :currency="summary.data.currency"
+          />
+          <BudgetVsActualCard
+            :cycles="summary.data.budget_cycles || []"
+            :currency="summary.data.currency"
+          />
+        </div>
+      </section>
+
+      <section class="mt-8">
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Holdings and imports</h2>
+        <p class="text-xs text-gray-400 mt-0.5">What the balances are made of, and where the data came from</p>
+
+        <AssetBreakdownCard
+          :items="summary.data.assets_by_account || []"
+          class="mt-3"
+        />
+
+        <RecentImportsStrip
+          :runs="summary.data.recent_runs"
+          class="mt-4"
+          @open="(run) => router.push(`/runs/${run.name}`)"
+          @new-import="router.push('/runs/new')"
+        />
+      </section>
     </template>
 
     <BalanceDetailModal

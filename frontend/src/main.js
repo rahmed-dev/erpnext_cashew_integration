@@ -28,11 +28,12 @@ router.afterEach((to) => {
 const app = createApp(App);
 app.use(router);
 app.use(resourcesPlugin);
-// NOTE: `apexchart` is deliberately NOT registered globally. A global
-// registration is a static import into the entry chunk, which pulled the whole
-// ~450 kB chart library into first paint on every route — including Imports and
-// Settings, which draw no chart. IncomeExpenseChart.vue registers it locally as
-// an async component instead, so it downloads only when a chart actually mounts.
+// NOTE: no chart component is registered globally. A global registration is a
+// static import into the entry chunk, which would pull the chart library into
+// first paint on every route — including Imports and Settings, which draw no
+// chart. <CsChart> (f012 c001) loads vue-echarts and the tree-shaken echarts
+// registrations as an async component instead, so the engine downloads only when
+// a chart with data actually mounts.
 
 installErrorInterceptors();
 

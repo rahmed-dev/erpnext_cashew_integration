@@ -246,6 +246,11 @@ def _process(run_name: str) -> None:
 
     _update_counters(run, posted, failed, skipped, resynced)
 
+    # Budgets (f012 c012) — reference data, imported alongside the run but OUTSIDE
+    # it. Deliberately after the counters are final: this step must never move
+    # them, never change the run's status, and never fail the run.
+    _import_budgets(run)
+
     # Diagnostics CSV (C008)
     try:
         diag_file = generate_diagnostics_csv(rows, run)
@@ -266,6 +271,46 @@ def _process(run_name: str) -> None:
         "rows_resynced": resynced,
         "finished_on":  str(run.finished_on),
     })
+
+
+# ── budgets (f012 c012) ───────────────────────────────────────────────────────
+
+def _import_budgets(run) -> None:
+    """Upsert the backup's budgets. Swallows every failure by design.
+
+    Budgets are reference data: they are worth having, and never worth failing a
+    posted ledger import over. A budget with an unrecognised reoccurrence, an
+    unmapped scope member, or an unreadable budgets table leaves the ledger
+    exactly as it is and shows up in the Error Log instead.
+
+    SQLite-only: the CSV export carries no budgets at all.
+    """
+    if run.source_type != "SQLite" or not run.source_file:
+        return
+
+    try:
+        from cashew_integration.api import _read_attached_file
+        from cashew_integration.importer.budgets import import_budgets
+        from cashew_integration.importer.sqlite_reader import read_budgets
+
+        budgets = read_budgets(_read_attached_file(run.source_file))
+        if not budgets:
+            return
+        summary = import_budgets(budgets, run.company, run.name)
+        frappe.db.commit()
+    except Exception:
+        frappe.db.rollback()
+        frappe.log_error(frappe.get_traceback(),
+                         f"Cashew Budget Import Error: run={run.name}")
+        return
+
+    if summary.get("skipped"):
+        # A skipped budget is a mapping gap, not a bug — recorded where a person
+        # will look, and fixed by mapping the member and re-running the import.
+        frappe.log_error(
+            frappe.as_json(summary["skipped"], indent=2),
+            f"Cashew Budgets Not Imported (unmapped scope): {run.name}",
+        )
 
 
 # ── revert: enqueue helper ────────────────────────────────────────────────────

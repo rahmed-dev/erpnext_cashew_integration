@@ -97,11 +97,12 @@ export default defineConfig({
 		}),
 	],
 	build: {
-		// vendor-charts (apexcharts, ~680 kB raw / ~196 kB gzip) trips the default
-		// 500 kB warning, but it is a LAZY chunk — only IncomeExpenseChart pulls it,
-		// so no route pays for it at first paint. 700 keeps the warning useful: any
-		// chunk that grows past apexcharts still gets flagged. If a NEW chunk ever
-		// approaches this, split it rather than raising the number again.
+		// vendor-charts (tree-shaken echarts + vue-echarts) trips the default 500 kB
+		// warning, but it is a LAZY chunk — only <CsChart> pulls it, and only when a
+		// chart with data mounts, so no route pays for it at first paint. 700 keeps
+		// the warning useful: any chunk that grows past the chart engine still gets
+		// flagged. If a NEW chunk ever approaches this, split it rather than raising
+		// the number again.
 		chunkSizeWarningLimit: 700,
 		rolldownOptions: {
 			// reka-ui ships a bundled @vueuse/core whose dist has `/* #__PURE__ */`
@@ -118,12 +119,12 @@ export default defineConfig({
 			output: {
 				// Split long-lived vendor code out of the entry chunk. Order matters:
 				// groups are matched top-down, so charts is tested before the generic
-				// vue group (vue3-apexcharts would otherwise land in vendor-vue).
+				// vue group (vue-echarts would otherwise land in vendor-vue).
 				// Rolldown renamed this option from `advancedChunks` to
 				// `codeSplitting`; the old name still works but logs a deprecation.
 				codeSplitting: {
 					groups: [
-						{ name: 'vendor-charts', test: /[\\/]node_modules[\\/](apexcharts|vue3-apexcharts)[\\/]/ },
+						{ name: 'vendor-charts', test: /[\\/]node_modules[\\/](echarts|vue-echarts|zrender)[\\/]/ },
 						{ name: 'vendor-frappe-ui', test: /[\\/]node_modules[\\/](frappe-ui|reka-ui)[\\/]/ },
 						{ name: 'vendor-socket', test: /[\\/]node_modules[\\/](socket\.io-client|engine\.io-client)[\\/]/ },
 						{ name: 'vendor-vue', test: /[\\/]node_modules[\\/](vue|vue-router|@vue)[\\/]/ },

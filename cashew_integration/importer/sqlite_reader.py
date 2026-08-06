@@ -20,6 +20,7 @@ authoritative ``paired_transaction_fk`` rather than the CSV's note+time heuristi
 JVs the per-row hash gate can't catch). See ``_apply_fk_pairing``.
 """
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -125,8 +126,8 @@ def read_sqlite(
 
 # ── db access ──────────────────────────────────────────────────────────────────
 
-def _fetch_rows(file_content: bytes) -> list[sqlite3.Row]:
-    """Open the uploaded bytes as a read-only SQLite DB and run the reader query.
+def _with_ro_connection(file_content: bytes, fn):
+    """Open the uploaded bytes as a read-only SQLite DB and hand the connection to ``fn``.
 
     ``sqlite3`` needs a path, so the bytes are written to a temp file, opened
     read-only (never mutate the uploaded backup), and cleaned up in ``finally``.
@@ -139,7 +140,7 @@ def _fetch_rows(file_content: bytes) -> list[sqlite3.Row]:
         conn = sqlite3.connect(f"file:{tmp.name}?mode=ro", uri=True)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(_reader_sql(conn)).fetchall()
+            return fn(conn)
         except sqlite3.DatabaseError:
             frappe.throw(
                 "The attached file is not a readable Cashew SQLite backup. "
@@ -154,6 +155,12 @@ def _fetch_rows(file_content: bytes) -> list[sqlite3.Row]:
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+def _fetch_rows(file_content: bytes) -> list[sqlite3.Row]:
+    return _with_ro_connection(
+        file_content, lambda conn: conn.execute(_reader_sql(conn)).fetchall()
+    )
 
 
 # ── per-row normalization (parity-critical) ────────────────────────────────────
@@ -311,6 +318,174 @@ def _apply_fk_pairing(rows: list[dict]) -> None:
             row["resolved_route"] = "External Transfer JE"
             row["resolved_external_account"] = None
             row["transfer_pair_row_idx"] = None
+
+
+# ── budgets (f012 c012) — a SEPARATE path, deliberately not part of read_sqlite ─
+#
+# Budgets are reference data, not postings: they never become Cashew Import Row
+# records, they touch no run counter, and a revert does not remove them. Keeping
+# them out of read_sqlite is what guarantees that — the row pipeline literally
+# cannot see them.
+#
+# The CSV export carries no budgets at all, so this is a SQLite-only capability.
+# Both dashboard surfaces that consume budgets hide cleanly when there are none.
+
+# Cashew's `budgets.reoccurrence` integer enum. FLAGGED ASSUMPTION (f012 D3.d /
+# C5.5): every budget in every export observed so far is a (3, 1) default stamp,
+# so no observation distinguishes the values — this is the declaration order of
+# Cashew's own BudgetReoccurence enum, and 3 = Monthly is consistent with both
+# live budgets being monthly. An unrecognised value RAISES; it is never bucketed
+# as monthly, because a budget chart that is wrong but plausible is worse than
+# no budget chart.
+_REOCCURRENCE_LABELS = {
+    0: "Custom",
+    1: "Daily",
+    2: "Weekly",
+    3: "Monthly",
+    4: "Yearly",
+}
+
+_BUDGET_SQL = """
+SELECT budget_pk, name, amount, income, archived, pinned,
+       start_date, reoccurrence, period_length,
+       wallet_fks, category_fks, category_fks_exclude
+FROM budgets
+ORDER BY "order", budget_pk;
+"""
+
+
+def read_budgets(file_content: bytes) -> list[dict]:
+    """Read the `budgets` table and return one dict per budget, PKs resolved to names.
+
+    Name resolution happens HERE, not in the consumer, because the Cashew Account
+    Mapping and Cashew Category Mapping tables key on the Cashew **name** — the
+    CSV export carries no PKs, so names are the only identifier both ingestion
+    paths share. A consumer holding raw `*_fk` strings has nothing to match on.
+
+    Returns ``[]`` for a backup with no `budgets` table (older export) rather than
+    failing — budgets are additive.
+
+    Raises on an unrecognised `reoccurrence`. The caller is expected to treat that
+    as "import no budgets this run", never as "import them as monthly".
+    """
+    tz = pytz.timezone(get_system_timezone() or _DEFAULT_TZ)
+    return _with_ro_connection(file_content, lambda conn: _read_budgets(conn, tz))
+
+
+def _read_budgets(conn: sqlite3.Connection, tz) -> list[dict]:
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "budgets" not in tables:
+        return []
+
+    categories = _category_index(conn)
+    wallets = {
+        r["wallet_pk"]: (r["name"] or "").strip()
+        for r in conn.execute("SELECT wallet_pk, name FROM wallets")
+    }
+
+    budgets = []
+    for raw in conn.execute(_BUDGET_SQL):
+        budgets.append({
+            "budget_pk": raw["budget_pk"],
+            "budget_name": (raw["name"] or "").strip(),
+            "amount": float(raw["amount"] or 0.0),
+            "is_income": 1 if int(raw["income"] or 0) == 1 else 0,
+            "is_archived": 1 if int(raw["archived"] or 0) == 1 else 0,
+            "is_pinned": 1 if int(raw["pinned"] or 0) == 1 else 0,
+            # Epoch SECONDS in the site timezone. A UTC conversion moves the
+            # anchor a day and shifts every cycle boundary after it.
+            "start_date": _epoch_to_local_date(raw["start_date"], tz),
+            "reoccurrence": _reoccurrence_label(raw["reoccurrence"], raw["budget_pk"]),
+            "period_length": int(raw["period_length"] or 1) or 1,
+            # `wallet_fks` is the wallet SCOPE; empty means ALL wallets. The
+            # scalar `wallet_fk` column is a display anchor and takes no part in
+            # matching — reading it as the scope changes real figures.
+            "wallet_scope": [
+                {"pk": pk, "wallet": wallets.get(pk)}
+                for pk in _pk_list(raw["wallet_fks"])
+            ],
+            "category_scope": [
+                {"pk": pk, **categories.get(pk, {"category": None, "sub_category": ""})}
+                for pk in _pk_list(raw["category_fks"])
+            ],
+            "category_exclude": [
+                {"pk": pk, **categories.get(pk, {"category": None, "sub_category": ""})}
+                for pk in _pk_list(raw["category_fks_exclude"])
+            ],
+        })
+    return budgets
+
+
+def _category_index(conn: sqlite3.Connection) -> dict[str, dict]:
+    """category_pk → ``{"category", "sub_category"}`` in Cashew Category Mapping's shape.
+
+    Cashew nests one level: a row with `main_category_pk` set is a SUB-category,
+    and the mapping table keys on the (parent name, own name) pair. A flat
+    pk→name lookup would file every sub-category under a parent it does not have.
+    """
+    rows = {
+        r["category_pk"]: ((r["name"] or "").strip(), r["main_category_pk"])
+        for r in conn.execute("SELECT category_pk, name, main_category_pk FROM categories")
+    }
+    index: dict[str, dict] = {}
+    for pk, (name, main_pk) in rows.items():
+        if main_pk and main_pk in rows:
+            index[pk] = {"category": rows[main_pk][0], "sub_category": name}
+        else:
+            index[pk] = {"category": name, "sub_category": ""}
+    return index
+
+
+def _pk_list(value) -> list[str]:
+    """Parse a Cashew list column into opaque PK strings.
+
+    Stored as a JSON array by Cashew's list converter; NULL and ``[]`` both mean
+    "no restriction". Every element stays a STRING — seeded Cashew records use
+    small integer PKs ("0" is Balance Correction, "5" is Entertainment), so a
+    UUID parse or an int cast silently drops those legs.
+    """
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if str(v) != ""]
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        # Not JSON — fall back to a comma-separated list rather than dropping a scope.
+        parsed = [p.strip() for p in str(value).split(",")]
+    if not isinstance(parsed, list):
+        return []
+    return [str(v) for v in parsed if str(v) != ""]
+
+
+def _epoch_to_local_date(value, tz) -> str | None:
+    if value in (None, ""):
+        return None
+    try:
+        return (
+            datetime.fromtimestamp(int(value), tz=timezone.utc)
+            .astimezone(tz)
+            .date()
+            .isoformat()
+        )
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
+def _reoccurrence_label(value, budget_pk: str) -> str:
+    try:
+        label = _REOCCURRENCE_LABELS.get(int(value))
+    except (TypeError, ValueError):
+        label = None
+    if not label:
+        frappe.throw(
+            f"Budget {budget_pk} has an unrecognised reoccurrence value ({value!r}). "
+            "Budgets were not imported. Report this value — the Cashew reoccurrence "
+            "enum is only partially known, and guessing would misstate every cycle.",
+            frappe.ValidationError,
+            title="BUDGET_REOCCURRENCE_UNKNOWN",
+        )
+    return label
 
 
 def _is_master_error(row: dict) -> bool:

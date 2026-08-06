@@ -16,6 +16,7 @@ import json
 
 import frappe
 from frappe import _
+from frappe.query_builder.functions import Count, Sum
 from frappe.utils import cint, flt, now
 
 from cashew_integration.importer.parser import (
@@ -963,6 +964,10 @@ def dashboard_summary(
 
     recent_runs = _recent_runs(company)
 
+    # f012 c002 — three additive time-series blocks. Every key above keeps its
+    # name and meaning, so the tiles that shipped with f010 are untouched.
+    from cashew_integration import dashboard_series
+
     return {
         "period": {"start": period_start, "end": period_end},
         "company": company,
@@ -974,11 +979,55 @@ def dashboard_summary(
         "assets_by_account": assets_by_account,
         "balance_tiles": balance_tiles,
         "recent_runs": recent_runs,
+        "invoices": _invoice_kpis(company, period_start, period_end),
+        "daily_spend": dashboard_series.daily_spend(company, period_start, period_end),
+        "series": dashboard_series.period_series(company, period_start, period_end),
+        "budget_cycles": dashboard_series.budget_cycles(company, period_start, period_end),
+        # f012 c008 — sankey money flow. Additive like the blocks above.
+        "money_flow": dashboard_series.money_flow(company, period_start, period_end),
     }
 
 
 def _r(x: float) -> float:
     return round(float(x or 0.0), 2)
+
+
+# f012 c003 — invoice KPIs. D3.c, confirmed by the user: "invoice" here means the
+# VOLUME AND VALUE OF INVOICES POSTED IN THE PERIOD, not outstanding AR/AP. The
+# importer's auto_settle_cash defaults to true, so open receivables and payables
+# are empty by construction and an outstanding-balance KPI would read zero on a
+# site that is invoicing normally — which looks like a broken tile, not a fact.
+_INVOICE_DOCTYPES = {"sales": "Sales Invoice", "purchase": "Purchase Invoice"}
+
+
+def _invoice_kpis(company: str, start: str, end: str) -> dict:
+    """Count and base-currency value of submitted invoices posted in the period.
+
+    A doctype the user cannot read is reported as ``None`` rather than zero: a
+    permission gap and a genuinely empty period must not look the same. The SPA
+    hides the tile on None and shows a zero on 0.
+
+    Returns are included at their own (negative) value rather than filtered out,
+    so the figure matches what the period actually booked.
+    """
+    out: dict[str, dict | None] = {}
+    for key, doctype in _INVOICE_DOCTYPES.items():
+        if not frappe.has_permission(doctype, "read"):
+            out[key] = None
+            continue
+        inv = frappe.qb.DocType(doctype)
+        row = (
+            frappe.qb.from_(inv)
+            .select(Count(inv.name).as_("count"), Sum(inv.base_grand_total).as_("amount"))
+            .where(
+                (inv.company == company)
+                & (inv.docstatus == 1)
+                & (inv.posting_date[start:end])
+            )
+        ).run(as_dict=True)
+        agg = row[0] if row else {}
+        out[key] = {"count": cint(agg.get("count")), "amount": _r(agg.get("amount"))}
+    return out
 
 
 def _period_pnl(company: str, start: str, end: str):
@@ -1318,6 +1367,143 @@ def get_import_row_field_guide() -> list[dict]:
     frappe.has_permission("Cashew Import Run", "read", throw=True)
     from cashew_integration.importer.field_guide import build_field_guide
     return build_field_guide()
+
+
+# ── f012 c014: inline unmapped-entity resolution ───────────────────────────────
+
+@frappe.whitelist()
+def unmapped_entities(run_name: str) -> dict:
+    """Every Cashew account / category this run references with no active mapping.
+
+    An aggregate over the run's rows, so it is one purpose-built endpoint rather
+    than a client-side scan (SPA API discipline rule 4). Read-only.
+
+    ``can_write`` tells the SPA whether to render editable pickers or a
+    read-only list with a Desk link: the mapping tables are child tables of the
+    Cashew Settings single, so write access is governed by permission on
+    Cashew Settings, not by a per-child-doctype permission (child doctypes have
+    no DocPerms of their own).
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", doc=run, throw=True)
+
+    from cashew_integration.importer.unmapped import (
+        CATEGORY_TYPE_ROOT_TYPES,
+        collect_unmapped,
+    )
+
+    result = collect_unmapped(run)
+    result["company"] = run.company
+    result["can_write"] = bool(frappe.has_permission("Cashew Settings", "write"))
+    result["category_type_root_types"] = CATEGORY_TYPE_ROOT_TYPES
+    return result
+
+
+@frappe.whitelist()
+def resolve_unmapped_entities(
+    run_name: str,
+    accounts=None,
+    categories=None,
+    revalidate: bool = True,
+) -> dict:
+    """Write mappings for the entities the user just resolved, then re-validate.
+
+    *accounts*  — [{cashew_account_name, erp_account, account_currency}, ...]
+    *categories* — [{cashew_category, cashew_sub_category, category_type,
+                     default_account, requires_party}, ...]
+
+    Re-validating is part of the same action on purpose: validate_import already
+    re-resolves both mapping tables from scratch, so it is what actually clears
+    the CASHEW_ACCOUNT_NOT_MAPPED / MAPPING_NOT_FOUND errors off the rows. Making
+    the user press Validate separately would leave the panel reporting entities
+    it had just fixed.
+
+    Mapping validation errors (notably the category account-class predicate) are
+    allowed to propagate — the user needs to see why the account was rejected.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", doc=run, throw=True)
+    frappe.has_permission("Cashew Settings", "write", throw=True)
+
+    from cashew_integration.importer.unmapped import apply_resolutions, collect_unmapped
+
+    accounts = frappe.parse_json(accounts) if isinstance(accounts, str) else (accounts or [])
+    categories = frappe.parse_json(categories) if isinstance(categories, str) else (categories or [])
+
+    written = apply_resolutions(accounts, categories)
+
+    revalidated = False
+    if revalidate and run.status in ("Parsed", "Validated"):
+        validate_import(run_name)
+        revalidated = True
+
+    run.reload()
+    remaining = collect_unmapped(run)
+    return {
+        "written": written,
+        "revalidated": revalidated,
+        "accounts": remaining["accounts"],
+        "categories": remaining["categories"],
+    }
+
+
+# ── f012 c015: budgets-only sync ───────────────────────────────────────────────
+
+@frappe.whitelist()
+def sync_budgets(file_url: str, company: str | None = None) -> dict:
+    """Read ONLY the budgets out of a Cashew backup and upsert them.
+
+    This is a configuration fetch that happens to read a `.sql` file. It creates
+    no Cashew Import Run, no Cashew Import Row, no Journal Entry and no GL Entry,
+    and it never looks at the transactions table — so running it against a backup
+    whose transactions are already imported behaves identically to running it
+    against one that was never imported at all.
+
+    It is idempotent and meant to be re-run: budgets upsert on `budget_pk`, so
+    this is how an edit made in Cashew reaches ERPNext without touching the
+    ledger. A budget deleted in Cashew is NOT deleted here — matching f002 D9's
+    insert-only stance on deletions; Cashew's `archived` flag is the inactive
+    signal and it does carry across.
+
+    Returns ``{"created", "updated", "unchanged", "skipped", "total"}`` where the
+    first three are counts and `skipped` lists the budgets the Decision 6 mapping
+    gate refused, with the unresolved members that caused it.
+    """
+    if not file_url:
+        frappe.throw(_("Select a Cashew backup file first."))
+    if not company:
+        company = frappe.db.get_single_value("Cashew Settings", "company")
+    if not company:
+        company = frappe.defaults.get_user_default("Company")
+    if not company:
+        frappe.throw(_("company is required"))
+
+    # Budgets are written with ignore_permissions (the operator's right to run
+    # the sync is the authorisation), so the gate has to be here. Cashew Settings
+    # write is the right gate: budget scope is resolved entirely through its
+    # mapping child tables, and anyone who may edit those already decides what a
+    # budget resolves to.
+    frappe.has_permission("Cashew Settings", "write", throw=True)
+    frappe.has_permission("Cashew Budget", "create", throw=True)
+    frappe.has_permission("Company", "read", doc=company, throw=True)
+
+    from cashew_integration.importer.budgets import import_budgets
+    from cashew_integration.importer.sqlite_reader import read_budgets
+
+    budgets = read_budgets(_read_attached_file(file_url))
+    if not budgets:
+        return {"created": 0, "updated": 0, "unchanged": 0, "skipped": [], "total": 0}
+
+    summary = import_budgets(budgets, company)
+    frappe.db.commit()
+    return {
+        "created": len(summary["created"]),
+        "updated": len(summary["updated"]),
+        "unchanged": len(summary["unchanged"]),
+        "skipped": summary["skipped"],
+        "total": len(budgets),
+        "company": company,
+    }
 
 
 # ── integrity: reconciliation + opening balances ───────────────────────────────
