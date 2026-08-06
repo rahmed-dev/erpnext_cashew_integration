@@ -49,8 +49,8 @@ features:
   - id: f010
     slug: cashew-frontend-spa
     name: Cashew Frontend SPA (Runs + Dashboard)
-    status: backlog
-    stage: not-started
+    status: done
+    stage: done
   - id: f011
     slug: cashew-sql-import
     name: Cashew SQL (SQLite) Import

@@ -1,6 +1,5 @@
 <script setup>
 import { ref, computed } from 'vue';
-import { Dropdown } from 'frappe-ui';
 import { Check, ChevronDown } from 'lucide-vue-next';
 
 const props = defineProps({ modelValue: { type: Array, default: () => [] } });
@@ -42,7 +41,7 @@ function clearAll() { emit('update:modelValue', []); }
     </button>
     <div
       v-if="open"
-      class="absolute z-30 mt-1 min-w-[200px] bg-white border border-gray-200 rounded-md shadow-md p-1"
+      class="absolute z-50 mt-1 min-w-[200px] bg-white border border-gray-200 rounded-lg shadow-md p-1"
       @click.stop
     >
       <div class="flex items-center justify-between px-2 py-1">
@@ -62,6 +61,10 @@ function clearAll() { emit('update:modelValue', []); }
         </button>
       </div>
     </div>
-    <button v-if="open" class="fixed inset-0 z-20 cursor-default" aria-hidden="true" @click="open = false" />
+    <!-- Menu is an overlay, so it owns z-50 per the design-philosophy scale — at z-30
+         it tied with MobileBottomNav/SelectionFooter and DOM order could paint it
+         underneath them on a phone. Backdrop sits at z-40: above app chrome so an
+         outside tap closes the menu, below the panel itself. -->
+    <button v-if="open" class="fixed inset-0 z-40 cursor-default" aria-hidden="true" @click="open = false" />
   </div>
 </template>

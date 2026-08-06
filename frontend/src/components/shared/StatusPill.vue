@@ -11,8 +11,10 @@ const TABLES = {
     Draft:           { label: 'Draft',         cls: 'bg-gray-300 text-gray-700' },
     Parsed:          { label: 'Parsed',        cls: 'bg-sky-100 text-sky-700' },
     Validated:       { label: 'Validated',     cls: 'bg-blue-100 text-blue-700' },
-    Queued:          { label: 'Queued',        cls: 'bg-indigo-100 text-indigo-700' },
-    Processing:      { label: 'Processing',    cls: 'bg-indigo-100 text-indigo-700', pulse: true },
+    // In-flight states carry the accent (design philosophy #6) — hardcoded indigo
+    // here stayed indigo after the user picked another accent in Settings.
+    Queued:          { label: 'Queued',        cls: 'bg-cs-accent-100 text-cs-accent-700' },
+    Processing:      { label: 'Processing',    cls: 'bg-cs-accent-100 text-cs-accent-700', pulse: true },
     Completed:       { label: 'Completed',     cls: 'bg-green-100 text-green-700' },
     Failed:          { label: 'Failed',        cls: 'bg-red-100 text-red-700' },
     Cancelled:       { label: 'Cancelled',     cls: 'bg-gray-200 text-gray-700' },
@@ -38,9 +40,13 @@ const TABLES = {
     'Loan Receivable':   { label: 'Loan Receivable',    cls: 'bg-violet-100 text-violet-700' },
     'Loan Payable':      { label: 'Loan Payable',       cls: 'bg-violet-100 text-violet-700' },
   },
+  // Deliberately NOT accent-tinted: CSV and SQLite render side by side, and under
+  // the Monochrome preset --cs-accent-100 (#e5e7eb) is nearly CSV's gray (#f3f4f6),
+  // so accent here would trade a theming bug for an unreadable one. A fixed hue
+  // stays distinct from gray under every accent.
   'source-type': {
     CSV:    { label: 'CSV',    cls: 'bg-gray-100 text-gray-700' },
-    SQLite: { label: 'SQLite', cls: 'bg-indigo-100 text-indigo-700' },
+    SQLite: { label: 'SQLite', cls: 'bg-violet-100 text-violet-700' },
   },
 };
 

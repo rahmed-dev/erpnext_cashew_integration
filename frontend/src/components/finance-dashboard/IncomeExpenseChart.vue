@@ -1,6 +1,13 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, defineAsyncComponent } from 'vue';
 import AmountDisplay from '@/components/shared/AmountDisplay.vue';
+
+// Local ASYNC registration, not a global app.component in main.js. apexcharts is
+// ~450 kB and this is the only component that draws one — a static import would
+// anchor it in the entry chunk and every route would pay for it at first paint.
+// The `hasData` guard below means the import is not even requested when the
+// dashboard has nothing to plot.
+const apexchart = defineAsyncComponent(() => import('vue3-apexcharts'));
 
 const props = defineProps({
   income: { type: [Number, null], default: 0 },
@@ -174,7 +181,7 @@ function pct(amount, total) {
         <!-- Floating breakdown panel beside cursor -->
         <div
           v-if="hoverMeta"
-          class="absolute z-20 rounded-md border border-gray-200 bg-white shadow-lg p-3 pointer-events-none"
+          class="absolute z-20 rounded-lg border border-gray-200 bg-white shadow-lg p-3 pointer-events-none"
           :style="tooltipStyle"
         >
           <div class="flex items-center justify-between gap-3 mb-2 pb-2 border-b border-gray-100">

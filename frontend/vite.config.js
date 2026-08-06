@@ -96,6 +96,42 @@ export default defineConfig({
 			},
 		}),
 	],
+	build: {
+		// vendor-charts (apexcharts, ~680 kB raw / ~196 kB gzip) trips the default
+		// 500 kB warning, but it is a LAZY chunk — only IncomeExpenseChart pulls it,
+		// so no route pays for it at first paint. 700 keeps the warning useful: any
+		// chunk that grows past apexcharts still gets flagged. If a NEW chunk ever
+		// approaches this, split it rather than raising the number again.
+		chunkSizeWarningLimit: 700,
+		rolldownOptions: {
+			// reka-ui ships a bundled @vueuse/core whose dist has `/* #__PURE__ */`
+			// comments in positions rolldown cannot attribute, so every build logs
+			// INVALID_ANNOTATION. It is a missed dead-code-elimination hint inside a
+			// dependency's prebuilt file — nothing in this app can fix it, and it is
+			// not a correctness problem. Silence it for node_modules ONLY, so the
+			// same warning against our own source still surfaces.
+			onwarn(warning, defaultHandler) {
+				const inDependency = (warning.id || warning.loc?.file || '').includes('node_modules');
+				if (warning.code === 'INVALID_ANNOTATION' && inDependency) return;
+				defaultHandler(warning);
+			},
+			output: {
+				// Split long-lived vendor code out of the entry chunk. Order matters:
+				// groups are matched top-down, so charts is tested before the generic
+				// vue group (vue3-apexcharts would otherwise land in vendor-vue).
+				// Rolldown renamed this option from `advancedChunks` to
+				// `codeSplitting`; the old name still works but logs a deprecation.
+				codeSplitting: {
+					groups: [
+						{ name: 'vendor-charts', test: /[\\/]node_modules[\\/](apexcharts|vue3-apexcharts)[\\/]/ },
+						{ name: 'vendor-frappe-ui', test: /[\\/]node_modules[\\/](frappe-ui|reka-ui)[\\/]/ },
+						{ name: 'vendor-socket', test: /[\\/]node_modules[\\/](socket\.io-client|engine\.io-client)[\\/]/ },
+						{ name: 'vendor-vue', test: /[\\/]node_modules[\\/](vue|vue-router|@vue)[\\/]/ },
+					],
+				},
+			},
+		},
+	},
 	server: {
 		port: 8080,
 		host: '0.0.0.0',

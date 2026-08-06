@@ -1,7 +1,6 @@
 import './index.css';
 import { createApp } from 'vue';
 import { resourcesPlugin, frappeRequest, setConfig } from 'frappe-ui';
-import VueApexCharts from 'vue3-apexcharts';
 
 import App from './App.vue';
 import router from './router';
@@ -29,7 +28,11 @@ router.afterEach((to) => {
 const app = createApp(App);
 app.use(router);
 app.use(resourcesPlugin);
-app.component('apexchart', VueApexCharts);
+// NOTE: `apexchart` is deliberately NOT registered globally. A global
+// registration is a static import into the entry chunk, which pulled the whole
+// ~450 kB chart library into first paint on every route — including Imports and
+// Settings, which draw no chart. IncomeExpenseChart.vue registers it locally as
+// an async component instead, so it downloads only when a chart actually mounts.
 
 installErrorInterceptors();
 

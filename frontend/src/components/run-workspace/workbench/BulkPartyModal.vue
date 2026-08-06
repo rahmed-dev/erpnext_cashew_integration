@@ -1,6 +1,7 @@
 <script setup>
-import { ref, reactive } from 'vue';
-import { Dialog, Button, Autocomplete, frappeRequest, toast } from 'frappe-ui';
+import { ref, reactive, watch } from 'vue';
+import { Dialog, Button, frappeRequest, toast } from 'frappe-ui';
+import LinkField from '@/components/shared/LinkField.vue';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -13,6 +14,11 @@ const form = reactive({ party_type: '', party: '' });
 const saving = ref(false);
 
 function reset() { form.party_type = ''; form.party = ''; }
+
+// Switching Customer→Supplier must drop the already-picked party, or a Customer
+// name would be submitted as a Supplier. LinkField clears its own option list on
+// a doctype change but cannot clear the bound value.
+watch(() => form.party_type, () => { form.party = ''; });
 function close() { emit('update:open', false); }
 
 async function save() {
@@ -36,8 +42,6 @@ async function save() {
   } catch (_e) { /* interceptor toasted */ }
   finally { saving.value = false; }
 }
-
-function onPartySelect(opt) { form.party = opt?.value ?? opt?.name ?? ''; }
 </script>
 
 <template>
@@ -57,11 +61,14 @@ function onPartySelect(opt) { form.party = opt?.value ?? opt?.name ?? ''; }
         </div>
         <div v-if="form.party_type">
           <label class="text-xs font-medium text-gray-700 block mb-1">Party</label>
-          <Autocomplete
+          <!-- LinkField, NOT a bare <Autocomplete reference_doctype>: that prop is a
+               no-op and the list would stay permanently empty (see LinkField.vue's
+               header + CLAUDE.md rule 2). Mirrors ValidationFixModal's party picker. -->
+          <LinkField
             :modelValue="form.party"
-            :options="[]"
-            :reference_doctype="form.party_type"
-            @update:modelValue="onPartySelect"
+            :doctype="form.party_type"
+            placeholder="Search party"
+            @update:modelValue="(v) => (form.party = v)"
           />
         </div>
 

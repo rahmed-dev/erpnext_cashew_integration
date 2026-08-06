@@ -122,7 +122,7 @@ function subOf(it) {
     <Teleport to="body">
       <div
         v-if="showPanel"
-        class="rounded-md border border-gray-200 bg-white shadow-lg p-3 pointer-events-none"
+        class="rounded-lg border border-gray-200 bg-white shadow-lg p-3 pointer-events-none"
         :style="tooltipStyle"
       >
         <div class="flex items-center justify-between gap-3 mb-2 pb-2 border-b border-gray-100">

@@ -60,7 +60,7 @@ function currentLabel() {
     </button>
     <div
       v-if="open"
-      class="absolute z-30 mt-1 min-w-[170px] bg-white border border-gray-200 rounded-md shadow-md py-1"
+      class="absolute z-50 mt-1 min-w-[170px] bg-white border border-gray-200 rounded-lg shadow-md py-1"
       @click.stop
     >
       <button
@@ -72,7 +72,9 @@ function currentLabel() {
         @click="pick(opt)"
       >{{ opt.label }}</button>
     </div>
-    <button v-if="open" class="fixed inset-0 z-20 cursor-default" aria-hidden="true" @click="open = false" />
+    <!-- z-50 panel / z-40 backdrop — see StatusFilter for the reasoning. The Dialog
+         below is also z-50 (.dialog-overlay) but mounts later, so it still wins. -->
+    <button v-if="open" class="fixed inset-0 z-40 cursor-default" aria-hidden="true" @click="open = false" />
 
     <Dialog v-model="customOpen">
       <template #body>

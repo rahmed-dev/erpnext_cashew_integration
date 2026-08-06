@@ -19,7 +19,8 @@ const visibleFields = computed(() => {
 
 <template>
   <Transition name="drawer">
-    <div v-if="row" class="fixed inset-0 z-40">
+    <!-- A drawer is an overlay: z-50, not the z-40 app-nav tier. -->
+    <div v-if="row" class="fixed inset-0 z-50">
       <div class="absolute inset-0 bg-black/30" @click="emit('close')" />
       <aside class="absolute right-0 top-0 bottom-0 w-full sm:w-[480px] bg-white shadow-xl flex flex-col">
         <header class="px-4 py-3 border-b border-gray-200 flex items-center gap-2">

@@ -16,8 +16,7 @@ const emit = defineEmits(['open', 'new-import']);
         <h3 class="text-sm font-semibold text-gray-900">Recent imports</h3>
         <p class="text-xs text-gray-500">5 most recent runs</p>
       </div>
-      <Button variant="ghost" theme="gray" @click="emit('new-import')">
-        <Plus :size="14" class="mr-1" />
+      <Button variant="ghost" theme="gray" :icon-left="Plus" @click="emit('new-import')">
         New Import
       </Button>
     </header>

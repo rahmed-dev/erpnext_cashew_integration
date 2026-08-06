@@ -1055,3 +1055,105 @@ next_step: >
   the full SPA on a test run.
 
 blocked_by: []
+
+patches:
+  - id: p001
+    name: Cut the entry bundle from 1015 kB to 18 kB; silence two build warnings
+    date: 2026-08-07
+    stage: done
+    summary: >
+      `yarn build` emitted two warnings and shipped a 1,014.98 kB entry chunk (gzip
+      294.89 kB) despite every route in router.js already being lazy.
+      ROOT CAUSE of the size: main.js registered the chart component globally
+      (`app.component('apexchart', VueApexCharts)`). A global registration is a static
+      import into the ENTRY chunk, so apexcharts (~680 kB raw / ~196 kB gzip) loaded on
+      every route — Imports, Settings and the run workspace all paid for a chart they
+      never draw, and the lazy route split could not help. Fix: dropped the global
+      registration and registered it locally in IncomeExpenseChart.vue via
+      defineAsyncComponent(() => import('vue3-apexcharts')). The component's existing
+      `v-if="hasData"` guard means the import is not even requested when there is
+      nothing to plot.
+      Added build.rolldownOptions.output.codeSplitting groups (vendor-charts,
+      vendor-frappe-ui, vendor-socket, vendor-vue) so vendor code lands in
+      long-lived, separately-cacheable chunks. Group order matters: charts is tested
+      before the generic vue group or vue3-apexcharts falls into vendor-vue. Note
+      rolldown renamed this option from `advancedChunks` to `codeSplitting` — the old
+      name builds but logs a deprecation warning.
+      WARNING 1 (INVALID_ANNOTATION, `/* #__PURE__ */` in reka-ui's bundled
+      @vueuse/core dist): a dependency's prebuilt file, unfixable from this app and not
+      a correctness issue. Filtered via a rolldownOptions.onwarn that drops it ONLY when
+      the id is under node_modules, so the same warning against our own source still
+      shows.
+      WARNING 2 (chunk > 500 kB): vendor-charts is 680 kB but is now LAZY, so the
+      default limit was measuring the wrong thing. chunkSizeWarningLimit raised to 700 —
+      high enough to clear apexcharts, low enough that anything larger still trips.
+      RESULT (verified): entry index-*.js 1,014.98 kB → 18.09 kB (gzip 294.89 → 7.29 kB);
+      chunks now vendor-charts 679.98, vendor-frappe-ui 414.53, vendor-socket 41.16,
+      per-route RunWorkspace 68.21 / FinanceDashboard 28.98 / ImportsList 23.24 /
+      Settings 11.03. Build is warning-free.
+      CAVEAT: total bytes are unchanged, and the PWA service worker precaches all
+      chunks (30 entries, 1449.68 KiB), so an INSTALLED PWA still downloads apexcharts
+      up front — the win is first-paint and per-route cost in the browser, plus vendor
+      chunks that survive app-code redeploys in cache. If the installed-PWA payload
+      matters, the real fix is dropping apexcharts for a hand-rolled SVG donut
+      (IncomeExpenseChart already hand-rolls its own tooltip) — not done here.
+      Files: frontend/vite.config.js, frontend/src/main.js,
+      frontend/src/components/finance-dashboard/IncomeExpenseChart.vue.
+      NOT verified in a browser — no bench web server this session; the dashboard chart
+      needs a click-through to confirm the async component mounts.
+
+  - id: p002
+    name: Six UI bugs found by a design-philosophy scan of the SPA
+    date: 2026-08-07
+    stage: done
+    summary: >
+      Static scan of all 80 frontend/src/*.vue against .fb/system-arch/design-philosophy.md
+      and the CLAUDE.md SPA API rules. One functional break plus five drifts from rules the
+      doc already codifies. All invisible at build time — the code compiled and rendered,
+      it just behaved wrong at runtime.
+      (1) FUNCTIONAL — BulkPartyModal.vue's party picker could never return a result. It used
+      `<Autocomplete :options="[]" :reference_doctype="form.party_type">`; reference_doctype is
+      a documented NO-OP (LinkField.vue header, CLAUDE.md rule 2) and Autocomplete only
+      client-filters the array it is given — which was literally empty. "Set party on N rows"
+      opened a permanently empty dropdown, so bulk party assignment was impossible. Swapped to
+      the canonical <LinkField :doctype>, matching ValidationFixModal's identical picker;
+      dropped the now-dead Autocomplete import and onPartySelect unwrapper. ALSO added a watch
+      that clears form.party when party_type flips — LinkField drops its stale option list on a
+      doctype change but cannot clear the bound value, so Customer→Supplier could otherwise
+      submit a Customer name as a Supplier.
+      (2) StatusFilter.vue + PeriodFilter.vue menus were `absolute z-30`, tying with
+      MobileBottomNav (z-30) and SelectionFooter (z-30); equal z means DOM order decides and the
+      shell renders after page content, so on a phone an open filter menu could paint UNDER the
+      bottom nav. Menus are overlays → z-50 per the doc scale; their click-catcher backdrops
+      z-20 → z-40 (above app chrome so an outside tap still closes, below the panel). Parents are
+      `relative` with z-index auto so they create no stacking context and z-50 lands in the root
+      context. PeriodFilter's own Dialog is unaffected — .dialog-overlay is also z-50 but mounts
+      later. Also removed a dead `Dropdown` import in StatusFilter.
+      (3) StatusPill.vue hardcoded bg-indigo-100/text-indigo-700 for Queued, Processing and
+      SQLite, so those three stayed indigo after the user picked another accent in Settings
+      (rule 6). Queued/Processing → bg-cs-accent-100 text-cs-accent-700 (tailwind.config already
+      maps the --cs-accent* vars). SQLite deliberately did NOT go accent: CSV and SQLite pills
+      render side by side and under the Monochrome preset --cs-accent-100 (#e5e7eb) is nearly
+      CSV's gray (#f3f4f6) — that trades a theming bug for an unreadable one. Gave it a fixed
+      violet instead, distinct from gray under every accent.
+      (4) InlineRowDrawer.vue was `fixed inset-0 z-40` — a drawer is an overlay and owns z-50;
+      z-40 is the app-nav tier, and it only worked because MobileBottomNav sits at z-30 rather
+      than the z-40 the doc assigns it.
+      (5) DashboardEmptyState.vue + RecentImportsStrip.vue hand-placed `<Plus :size="14"
+      class="mr-1">` in the Button default slot — the exact baseline-misalignment rule 4 was
+      written for. Switched to the :icon-left prop (ImportsList.vue:218 was already correct).
+      (6) rounded-md on four popover surfaces (StatusFilter, PeriodFilter, BalanceTile tooltip,
+      IncomeExpenseChart tooltip) → rounded-lg per rule 3. Other rounded-md hits are icon
+      buttons, swatches and nav items where rule 3 does not apply; left alone.
+      Scan came back CLEAN on: forced backgrounds, !important, the three overlay portal pins in
+      index.css, sticky-header tier, checkbox rounding.
+      VERIFIED: yarn build green and warning-free; grep invariants hold (no reference_doctype
+      outside LinkField's comment, no indigo in StatusPill, no `absolute z-30` menu); all four
+      new utility classes confirmed present in the built index-*.css, so none were purged.
+      NOT verified in a browser — no bench web server this session. Real confirmation needs:
+      bulk Set party lists customers on focus and repopulates on Customer→Supplier; filter menu
+      paints over the bottom nav on a narrow viewport; accent Teal retints the Queued pill while
+      SQLite stays violet.
+      Files: BulkPartyModal.vue, StatusFilter.vue, PeriodFilter.vue, StatusPill.vue,
+      InlineRowDrawer.vue, DashboardEmptyState.vue, RecentImportsStrip.vue, BalanceTile.vue,
+      IncomeExpenseChart.vue.

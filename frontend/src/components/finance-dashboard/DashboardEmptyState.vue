@@ -19,8 +19,7 @@ function focusPeriod() {
       Start an import to see income, expense, balances, and category breakdowns here.
     </p>
     <div class="mt-4 flex items-center gap-3">
-      <Button variant="solid" theme="gray" @click="$emit('new-import')">
-        <Plus :size="14" class="mr-1" />
+      <Button variant="solid" theme="gray" :icon-left="Plus" @click="$emit('new-import')">
         Start an Import
       </Button>
       <button class="text-sm text-[var(--cs-accent)] hover:underline" @click="focusPeriod">Change period</button>
