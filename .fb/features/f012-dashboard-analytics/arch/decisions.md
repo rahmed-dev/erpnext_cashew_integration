@@ -731,12 +731,36 @@ unmapped-Cashew-entity resolver with budgets as its first consumer — see c014.
 
 ---
 
-## Decision 7 — The negative balances are missing history, not a missing opening entry (2026-08-07)
+## Decision 7 — No opening entry. The negative curve is real, and the missing decade of history is an optional backfill (2026-08-07)
 
-**This replaces the opening-balance prerequisite recorded below and supersedes
-the framing in f013 c004.** Asked where the real opening figures should come
-from, the user said to take them from the SQL file. Checking whether that was
-possible showed the premise was wrong in a useful way.
+**Two conclusions, reached independently and then reconciled.** Asked where the
+real opening figures should come from, the user said to take them from the SQL
+file. Checking whether that was possible showed the premise was wrong — and
+`system-arch/import-integrity-2026-08-07.md` finding 1 had already been
+**withdrawn** for the same reason, by a separate pass, before this one ran.
+
+**Conclusion 1 — there is no opening balance to post, for any account.**
+Confirmed twice from the same file by two independent computations that agree to
+the cent: Petty Cash stood at **0.28** on 2026-03-04, the day before the ERP's
+import window opens, and ERPNext already holds exactly that. Saving stood at
+214,695.00 and is exact in ERPNext. Every other imported wallet opened at zero.
+
+The deep negative is **what the source data says**, not an artefact. Cashew's
+*own* running balance for Petty Cash reaches **−117,357.72 on 2026-01-01**,
+months before ERPNext knew the account existed. A wallet that goes deeply
+negative in Cashew goes deeply negative in ERPNext, correctly.
+
+**`importer/opening.py` stays as a general capability. Nothing is posted for
+this company. Do not reinstate the opening-balance prerequisite.**
+
+Two real gaps remain from the integrity pass, neither an opening-balance issue
+and neither blocking any component: Elevate Pay reads −1,238.85 PKR on live
+until the f013 repost script runs (one entry, `ACC-JV-2026-00275`), and Petty
+Cash is 1,324.00 PKR below Cashew for reasons not yet traced, with NSave 18.00
+USD above it from a manual JE (`ACC-JV-2026-00625`).
+
+**Conclusion 2 — separately, ten and a half months of history was never
+imported. That is a real gap, but it is a missed opportunity, not a defect.**
 
 **What the live ledger actually holds** (REST read against `erp.nstack.xyz`,
 2026-08-07, reconciled against `cashew-2026-08-07-00-20-33-593933.sql`):
@@ -756,53 +780,57 @@ Earliest GL Entry is **2025-12-01**. Cashew's own history starts **2025-02-05**.
 The completed import runs cover May, June and July 2026 plus two early undated
 CSV runs — roughly **ten and a half months of history was never imported.**
 
-**Conclusion: the accounts do not float at zero because an opening entry is
-missing. They float at zero because the transactions that would have filled
-them were never imported.** Posting an opening entry now would plug a hole with
-a lump sum and destroy the ability to ever see that period — for a feature whose
-entire purpose is historical charts, that is the worst available outcome.
+The import runs were **deliberately windowed from 2026-03-05 onward** — this is
+not an importer failure, it is simply where the user started importing. But for
+a feature whose entire purpose is historical charts, thirteen months of
+unimported history is the single cheapest improvement available to it.
 
-**Decision: backfill first, plug second, and only for what genuinely cannot be
-recovered.**
+**BACKFILL DECLINED BY THE USER (2026-08-07).** Offered and turned down: imports
+run regularly on the live site from the point the app was installed, and the
+pre-installation history is not wanted. **Do not re-raise this.** The rest of
+this section is kept as the record of what was offered and why.
 
-**Fix A — backfill the missing history from the SQLite backup.** f011 c002's
-date-windowed import already does this; no new code is required. Suggested
-windows, largest gap first: `2025-02-05 → 2025-11-30`, then
-`2025-12-01 → 2026-02-28`, then `2026-08-01 → 2026-08-06`. Re-importing an
-overlapping window is safe — `idempotency.apply_idempotency_guard` skips rows
-whose hash already resolves to a **submitted** document. Note that it filters on
-`docstatus = 1`, so a row whose JE was cancelled *will* repost, which is the
-desired behaviour here.
+**Consequence to design for:** the dashboard has roughly 5–6 months of history
+at build time, growing forward. The calendar heatmap renders part of one year,
+not a multi-year grid; most period selections land on the *daily* side of
+C5.8's 92-day switch; and the single-cycle gauge is the common case for c009,
+not the edge case.
+
+**The only thing genuinely missing from the live site is budgets** — never
+imported because the importer has never read them. That is c012, a build task,
+not a data task.
+
+~~Optional backfill (recommended, needs the user's go-ahead)~~ — re-run the
+date-windowed SQLite import against
+`cashew-2026-08-07-00-20-33-593933.sql`. f011 c002 already does this; **no new
+code is required.** Suggested windows, largest gap first:
+`2025-02-05 → 2025-11-30` (218 transactions), then `2025-12-01 → 2026-02-28`,
+then `2026-08-01 → 2026-08-06`.
+
+Re-importing an overlapping window is safe: `apply_idempotency_guard` skips rows
+whose hash already resolves to a **submitted** document. It filters on
+`docstatus = 1`, so a row whose JE was cancelled *will* repost — the desired
+behaviour here.
 
 Expect the backfill to surface unmapped categories and wallets from ten months
-of previously unseen data. That is exactly the c014 resolver's job, which is why
-c014 is worth building before the backfill rather than after.
-
-**Fix B — a residual opening entry, sized only after Fix A lands.** Cashew
-itself has no opening balances: computed over Cashew's *complete* history from
-2025-02-05, Petty Cash still reaches **−117,357.72** on 2026-01-01 and
-Investment sits at **−447,850** permanently. A full backfill therefore does not
-reach zero, and **the SQL file cannot supply the true opening — Cashew does not
-know it either.** That residual is genuinely the user's knowledge or nobody's.
-
-Sequence: run Fix A, re-run `opening_balance_audit`, then decide per account
-between the user's real figures and the computed minimum. The minimum is not
-worth computing before the backfill — the number changes once ten months land.
-
-**Flagged for the user, not decided here:** Investment's permanent −447,850 is
-not a missing-opening artefact. It is money recorded leaving for investments
-with no corresponding asset recognised — a modelling question about how
-investment transfers should post, not a data gap. It will render as a large
-negative band on c010 regardless of any opening entry.
+of previously unseen data. That is exactly c014's job, which is why c014 is
+worth building **before** the backfill rather than after.
 
 **Consequences:**
-- The "post the opening balances first" prerequisite is **rescinded** and
-  replaced by Fix A. c005 / c008 / c010 gate on the backfill, not on a plug.
-- The backfill is a large win for f012 on its own terms: it takes the charts
-  from 5 months of usable history to 18.
-- Both fixes are **operational actions against live data**, not f012 build work.
-  They need explicit user go-ahead per window, and a backup before the first
-  run.
+- The opening-balance prerequisite is **rescinded and must not be reinstated**.
+  c005 / c008 / c010 are **ungated** — build them in wave 2 with everything else.
+- The backfill is a large win for f012 on its own terms: roughly 5 months of
+  usable chart history becomes 18. It is **not** a prerequisite; every component
+  builds and renders correctly without it.
+- It is an **operational action on live data**, not build work. Explicit
+  go-ahead per window, and a backup before the first run.
+
+**Flagged, not decided:** Investment sits at −447,850 permanently in Cashew —
+money recorded leaving for investments with no asset recognised. That is a
+modelling question about how investment transfers should post, not a data gap,
+and it will render as a large negative band on c010 either way. The account is
+not currently mapped into ERPNext, so the backfill would introduce it; worth a
+decision before running the 2025 window.
 
 ---
 
@@ -838,11 +866,11 @@ sankey's exposure to zero-valued transfers is gone.
 **One item is NOT closed.** Every cash account still floors at zero and Petty
 Cash still dips to −132,313.22.
 
-**SUPERSEDED BY DECISION 7 (same day).** This caveat, and f013 c004's framing of
-it, both read the symptom as a missing opening entry. It is not. Reconciling the
-live ledger against the backup showed **ten and a half months of Cashew history
-were never imported** — 358 submitted JEs against 651 paid transactions, with
-2025-02 through 2025-11 entirely absent. The fix is a date-windowed backfill
-(Decision 7, Fix A), with a residual opening entry sized afterwards for the part
-Cashew itself cannot supply (Fix B). c005 / c008 / c010 gate on the backfill.
+**SUPERSEDED BY DECISION 7 (same day), and by the withdrawal of finding 1 in
+`system-arch/import-integrity-2026-08-07.md`.** This caveat read the symptom as
+a missing opening entry. It is not one. Petty Cash stood at 0.28 the day before
+the import window and ERPNext holds exactly that; Cashew's own running balance
+reaches −117,357.72 on 2026-01-01. **The negative curve is what the source data
+says.** Nothing is posted, no component is gated, and the opening-balance
+prerequisite must not be reinstated.
 

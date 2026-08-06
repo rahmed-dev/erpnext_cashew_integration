@@ -63,9 +63,20 @@ components:
       Root cause of CASHEW-IMPORT-2026-000004, which reported started_on/finished_on
       identical to run 000003 to the microsecond and earlier than its own creation.
   - id: c004
-    name: Opening balance audit + Opening Entry poster (capability kept; NOT needed for this company)
-    stage: done
+    name: Opening balance audit + Opening Entry poster — REMOVED FROM THE APP 2026-08-07
+    stage: reverted
     depends_on: []
+    reverted_notes: >
+      DELETED on user instruction 2026-08-07, during the f012 pre-dev pass.
+      importer/opening.py and the api.py endpoints opening_balance_audit /
+      post_opening_balances are gone from the tree — not unwired, removed. The
+      component solved a problem that does not exist for this company (see the
+      build notes below, which already recorded it as withdrawn as a fix), and
+      leaving a "post an opening balance" button in the app invites plugging a
+      real balance curve with a made-up number. f012's charts render the true
+      negative curve instead. Recover from git history if a genuine mid-life
+      account ever needs one. Nothing else referenced the module; api.py parses
+      clean and no test covered it.
     build_notes: >
       New importer/opening.py. audit_opening_balances() walks every leaf Cash/Bank account
       and reports the lowest point its running balance reaches; anything below zero is

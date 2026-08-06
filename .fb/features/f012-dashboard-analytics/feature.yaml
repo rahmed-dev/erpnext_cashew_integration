@@ -41,49 +41,66 @@ decisions_ref: arch/decisions.md
 demo_ref: demo/README.md
 
 # ---------------------------------------------------------------------------
-# PREREQUISITE — not a component, must happen before c005 / c008 / c010
+# PREREQUISITE — there is none. Kept as a tombstone so it is not reinvented.
 # ---------------------------------------------------------------------------
 prerequisite: |
-  BACKFILL THE MISSING HISTORY BEFORE BUILDING c005, c008, c010. (Decision 7.
-  This REPLACES the earlier "post the opening balances first" prerequisite,
-  which read the symptom wrong.)
+  NONE. Every component is ungated. (Decision 7.)
 
-  The live ledger holds 358 submitted Journal Entries against the backup's 651
-  paid transactions. 2025-02 through 2025-11 is entirely absent, 2025-12 through
-  2026-02 is mostly absent, 2026-08 is absent. Earliest GL Entry is 2025-12-01;
-  Cashew history starts 2025-02-05. Roughly ten and a half months were never
-  imported. The accounts do not float at zero because an opening entry is
-  missing — they float at zero because the transactions were never imported, and
-  an opening entry would plug that hole with a lump sum and permanently destroy
-  the period a charts feature exists to show.
+  DO NOT REINSTATE THE OPENING-BALANCE PREREQUISITE. An earlier version of this
+  file gated c005 / c008 / c010 on posting opening balances. That was wrong, and
+  finding 1 of system-arch/import-integrity-2026-08-07.md was WITHDRAWN for the
+  same reason. Confirmed twice by independent computation, agreeing to the cent:
+  Petty Cash stood at 0.28 on 2026-03-04, the day before the import window, and
+  ERPNext already holds exactly that; Saving stood at 214,695.00 and matches
+  exactly; every other imported wallet opened at zero. Cashew's OWN running
+  balance for Petty Cash reaches -117,357.72 on 2026-01-01. The deep negative is
+  what the source data says, not an artefact.
 
-  Fix A — date-windowed SQLite backfill from
-  cashew-2026-08-07-00-20-33-593933.sql. No new code: f011 c002 already does it.
-  Windows, largest gap first:
-    2025-02-05 -> 2025-11-30   (218 transactions)
-    2025-12-01 -> 2026-02-28
-    2026-08-01 -> 2026-08-06
-  Overlapping windows are safe — apply_idempotency_guard skips rows already
-  resolving to a SUBMITTED document (it filters docstatus = 1, so a row whose JE
-  was cancelled reposts, which is wanted here).
-  Build c014 BEFORE running this: ten months of unseen data will surface
-  unmapped categories and wallets, and c014 is the tool for exactly that.
+  THE CODE IS GONE (user instruction, 2026-08-07). importer/opening.py and the
+  api.py endpoints opening_balance_audit / post_opening_balances were DELETED,
+  not just unwired — a "post an opening balance" button invites plugging a real
+  curve with a made-up number. f013 c004 is marked withdrawn. Recover from git
+  history only if a genuine mid-life account ever needs one.
 
-  Fix B — a residual opening entry, sized only AFTER Fix A lands. Cashew has no
-  opening balances either: over its complete history Petty Cash still reaches
-  -117,357.72 and Investment sits at -447,850 permanently. The SQL file cannot
-  supply the true opening because Cashew does not know it. Re-run
-  opening_balance_audit after the backfill, then decide per account between the
-  user's real figures and the computed minimum. Computing it before the backfill
-  is wasted — the number moves once ten months land.
+  Two known balance gaps, neither blocking anything: Elevate Pay reads -1,238.85
+  PKR on live until the f013 repost script runs (ACC-JV-2026-00275); Petty Cash
+  is 1,324.00 PKR below Cashew, untraced, and NSave 18.00 USD above it from a
+  manual JE (ACC-JV-2026-00625).
 
-  Both are operational actions on live data, not build work. Explicit user
-  go-ahead per window, and a backup before the first run.
+backfill: |
+  DECLINED BY THE USER, 2026-08-07. Do not re-raise it, and do not plan any
+  component around history that is not there.
 
-  Separately flagged, not a data gap: Investment's permanent -447,850 is money
-  recorded leaving for investments with no asset recognised. A modelling
-  question about how investment transfers post; it will render as a large
-  negative band on c010 regardless of any opening entry.
+  It was offered because the live ledger holds 358 submitted Journal Entries
+  against the backup's 651 paid transactions — 2025-02 through 2025-11 entirely
+  absent, 2025-12 through 2026-02 mostly absent, earliest GL Entry 2025-12-01
+  against a Cashew history starting 2025-02-05. Importing the older windows via
+  f011 c002 would have taken chart history from roughly 5 months to 18.
+
+  The user declined: imports run regularly on the live site from the point the
+  app was installed, and the pre-installation history is not wanted. Nothing is
+  broken — the runs were deliberately windowed from 2026-03-05, which is where
+  the user started.
+
+  CONSEQUENCE, accept it and design for it: the dashboard has roughly 5-6 months
+  of usable history at build time, growing forward. Every chart must read well
+  at that length. Specifically:
+    - The calendar heatmap (c007) renders part of one year, not a multi-year
+      grid. Do not lay out a fixed 12-month calendar.
+    - The trend chart (c004) and balances (c005, c010) have few monthly buckets,
+      so the C5.8 daily/monthly switch at 92 days matters more than it looks —
+      most real selections will land on the DAILY side.
+    - Budget per-cycle series (c009, c013) will typically show a handful of
+      cycles. The single-cycle gauge path is the common case, not the edge case.
+
+  The only new thing genuinely missing from the live site is BUDGETS, which is
+  c012 — budgets have never been imported because the importer has never read
+  them. That is the actual gap, and it is a build task, not a data task.
+
+  CONFIG-ONLY BACKFILL IS IN SCOPE (user, 2026-08-07). Transaction history is
+  not backfilled; budget/savings CONFIG is. See c015 — a budgets-only sync that
+  reads a backup for its budgets and nothing else, so an existing site can pick
+  up the new feature without re-running any transaction import.
 
 key_architecture:
   - Charting engine is Apache ECharts via vue-echarts. ApexCharts and
@@ -96,9 +113,9 @@ key_architecture:
     registration. Never `import * from 'echarts'` — the SPA is PWA-precached
     (f010 c014) so bundle size is a real cost.
   - dashboard_summary is EXTENDED additively with THREE time-series blocks, each
-    sized to its consumer (C5.8): `daily_spend` always daily; `series` daily when
-    the period spans <= 92 days else monthly; `budget_cycles` bucketed on each
-    budget's own anchor, computed server-side. Existing keys keep their names.
+    sized to its consumer per C5.8 — `daily_spend` always daily; `series` daily
+    when the period spans <= 92 days else monthly; `budget_cycles` bucketed on
+    each budget's own anchor, computed server-side. Existing keys keep names.
   - Balance history is running GL sums — one grouped query plus a Python prefix
     sum over an opening cumulative read as of the day before period_start.
     Not period-end snapshots, not one query per bucket (C5.8).
@@ -108,8 +125,8 @@ key_architecture:
   - Period bucketing is site-timezone aware (same discipline as f011 c001); a
     UTC-bucketed posting date lands transactions in the wrong month. This
     applies to Cashew's epoch-second budget dates too (C5.4).
-  - Colour: one curated 10-hue categorical ramp in the chart theme, locked in
-    Decision 4; accent stays primary/emphasis. Narrowly amends
+  - Colour comes from one curated 10-hue categorical ramp in the chart theme,
+    locked in Decision 4; accent stays primary/emphasis. Narrowly amends
     design-philosophy.md point 6.
   - NO DARK MODE (C5.6). The SPA has zero `dark:` utilities. The ramp's dark
     column is a recorded forward asset, not a deliverable. Do not port the
@@ -123,12 +140,15 @@ key_architecture:
 # ---------------------------------------------------------------------------
 build_order:
   wave_1_gates: >
-    c001, c002, c012 — mutually independent, all three can proceed at once.
-    Nothing downstream builds until c001 (the wrapper) and c002 (the data) land.
+    c001, c002, c014, then c012, then c015. c001/c002/c014 are mutually
+    independent and can proceed at once. c012 needs c014's resolver, because a
+    budget whose scope is not fully mapped is not imported (Decision 6). c015 is
+    the budgets-only sync built on c012's reader — it is what actually gets
+    budgets onto the live site. Nothing downstream builds until c001 (the
+    wrapper) and c002 (the data) land.
   wave_2_charts: >
-    c003, c004, c005, c006, c007, c008, c009, c010, c013. Each is one chart or
-    card against a block c002 already returns. c005 / c008 / c010 wait on the
-    opening-balance prerequisite above.
+    c003, c004, c005, c006, c007, c008, c009, c010, c013 — all ungated, each one
+    chart or card against a block c002 already returns.
   wave_3_layout: >
     c011 last — it arranges what exists and cannot be specified before the
     pieces are real.
@@ -180,7 +200,7 @@ components:
   - id: c012
     name: Cashew Budget import — budgets table to a Cashew Budget doctype
     stage: not-started
-    depends_on: []
+    depends_on: [c014]
     wave: 1
     notes: >
       Gate component for c009 and c013. Goals live in `budgets`, NOT `objectives`
@@ -293,6 +313,46 @@ components:
       queue-time errors, which today are fixable only on Desk. Budgets are its
       first consumer, not its only one.
 
+  - id: c015
+    name: Budgets-only sync — pull budget/savings config from a backup without importing transactions
+    stage: not-started
+    depends_on: [c012, c014]
+    wave: 1
+    notes: >
+      User decision 2026-08-07. Transaction history is NOT backfilled, but
+      budget/savings CONFIG is — the live site has months of transactions and
+      zero budgets, because budgets are a new capability and the importer never
+      read them. Without this the only route to a populated dashboard is
+      re-running a transaction import purely as a carrier for budgets, which is
+      absurd and risks touching the ledger for a config fetch.
+
+      SCOPE: upload a Cashew backup, read ONLY the budgets table (plus the
+      categories and wallets needed to resolve its scope), upsert Cashew Budget
+      on budget_pk, done. Creates NO Cashew Import Row, NO Journal Entry, NO
+      GL Entry, and does NOT touch run counters. It is a configuration fetch
+      that happens to read a .sql file.
+
+      Reuses c012's read_budgets() wholesale — c012 already puts budgets on
+      their own path outside the row pipeline (C5.10), so this component is the
+      entry point and the surface, not a second implementation. Runs the same
+      Decision 6 mapping gate through c014: a budget whose scope is not fully
+      mapped is not imported, and the same screen offers the mapping.
+
+      IDEMPOTENT AND RERUNNABLE by design. This is how the user keeps ERPNext
+      budgets in step after editing a budget in Cashew — upsert on budget_pk,
+      re-run whenever. A budget deleted in Cashew does not vanish from ERPNext
+      (matches f002 D9's insert-only stance on deletions); `archived` is the
+      inactive signal.
+
+      SURFACE: its own action, clearly not an import run. Must not appear as a
+      Cashew Import Run in the runs list — a config sync that shows up in the
+      import history teaches the user to distrust that history. Report what
+      changed: N budgets created, N updated, N unchanged.
+
+      MUST STAY SAFE ON A BUSY SITE: the user imports regularly. This action
+      running against a backup whose transactions are already imported, or not
+      imported at all, must behave identically — it never looks at transactions.
+
   - id: c003
     name: KPI card row — total expense + invoice figures
     stage: not-started
@@ -320,9 +380,10 @@ components:
     depends_on: [c001, c002]
     wave: 2
     notes: >
-      BLOCKED ON THE OPENING-BALANCE PREREQUISITE. Plots the balance curve
-      directly; against an un-opened ledger it renders deeply negative from
-      correct code.
+      UNGATED (Decision 7). An earlier version of this file blocked it on
+      posting opening balances; there are none to post. The curve genuinely goes
+      deeply negative because the source data does — do not "fix" that in the
+      chart, and make sure the y-axis handles a large negative gracefully.
 
   - id: c006
     name: Expense treemap (flat category breakdown, hierarchy-ready contract)
@@ -355,8 +416,7 @@ components:
     wave: 2
     notes: >
       Heaviest backend work of the set; most likely to need its own aggregation
-      shape inside dashboard_summary. Highest visual payoff.
-      BLOCKED ON THE OPENING-BALANCE PREREQUISITE.
+      shape inside dashboard_summary. Highest visual payoff. UNGATED (Decision 7).
       Its former worst exposure — all 20 USD Transfer rows carrying
       base_amount = 0 — is FIXED by f013 c002, which now stamps exchange_rate
       and base_amount onto both transfer legs.
@@ -388,7 +448,11 @@ components:
     stage: not-started
     depends_on: [c001, c002]
     wave: 2
-    notes: BLOCKED ON THE OPENING-BALANCE PREREQUISITE.
+    notes: >
+      UNGATED (Decision 7). Will show Petty Cash deep in negative territory and,
+      if the optional backfill runs, an Investment band at roughly -447,850.
+      Both are what the source says. Design the band treatment to survive a
+      large negative rather than assuming all-positive stacking.
 
   - id: c013
     name: Budget vs actual — spending limits (income=0 budgets)
@@ -460,11 +524,11 @@ open_questions:
   - None blocking. Architecture is closed as of the 2026-08-07 coherence pass.
 
 known_unknowns:
-  - `budgets.reoccurrence` enum mapping ({0 custom, 1 daily, 2 weekly,
-    3 monthly, 4 yearly}) is UNVERIFIED and cannot be verified from either
+  - The budgets.reoccurrence enum mapping (0 custom, 1 daily, 2 weekly,
+    3 monthly, 4 yearly) is UNVERIFIED and cannot be verified from either
     export — every row is (3,1), a default stamp. Implemented as a flagged
     assumption with a raise-on-unrecognised-value guard (D3.d, C5.5).
-  - `budgets.budget_transaction_filters` ([6] / [5]) — meaning unknown,
+  - budgets.budget_transaction_filters ([6] / [5]) — meaning unknown,
     deliberately ignored. First suspect if an ERP budget figure ever disagrees
     with what Cashew shows on screen.
 

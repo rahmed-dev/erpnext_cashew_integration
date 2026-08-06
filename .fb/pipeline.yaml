@@ -68,16 +68,38 @@ dev_handoff: |
   it, Decision 5 wins), then demo/README.md.
 
   Build order:
-    Wave 1, gates, all three independent and parallelisable:
+    Wave 1, gates:
       c001  ECharts swap + <CsChart> + locked palette + port IncomeExpenseChart
       c002  dashboard_summary time-series extension (three blocks)
-      c012  Cashew Budget import
-    Wave 2, one chart or card each:
-      c003 c004 c006 c007 c009 c013   — buildable immediately after wave 1
-      c005 c008 c010                  — also buildable; the opening-balance gate
-                                        that used to hold these was withdrawn
+      c014  inline unmapped-entity resolver in the SPA import surface
+      c012  Cashew Budget import — needs c014
+    c001 / c002 / c014 are mutually independent and parallelisable.
+    Wave 2, one chart or card each, ALL UNGATED:
+      c003 c004 c005 c006 c007 c008 c009 c010 c013
     Wave 3:
       c011  layout restructure + mobile, last, against real components
+
+  Two decisions taken after this summary was first written (2026-08-07, user):
+    Decision 6 — a budget whose scope is not FULLY mapped is NOT imported.
+      Budget actuals come from GL Entry, so an unmapped scope member is a hole
+      in the figure, failing in the dangerous direction: a limit missing one
+      category reads UNDER limit when it is blown. The gate is actionable in
+      place — new c014 offers the mapping inline in the SPA rather than sending
+      the user to Desk. Narrowly amends f010's "config UX stays on Desk", for
+      blocked-import resolution only.
+    Decision 7 — no opening entry is posted; c005/c008/c010 ungated (this agrees
+      with the withdrawn finding 1, reached independently). A history backfill
+      was also offered and DECLINED by the user — imports run regularly from the
+      point the app was installed and the pre-installation history is not
+      wanted. DO NOT RE-RAISE either one.
+
+  Design for roughly 5-6 months of history, growing forward. The calendar
+  heatmap renders part of one year, not a multi-year grid; most period
+  selections land on the DAILY side of the 92-day switch; the single-cycle
+  gauge is the common case for c009, not the edge case.
+
+  The only thing genuinely missing from the live site is BUDGETS — never
+  imported because the importer has never read them. That is c012.
 
   Four traps that will cost a day each if missed:
     1. zrender does not understand CSS color-mix(). Translucent fills must be

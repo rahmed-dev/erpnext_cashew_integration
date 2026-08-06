@@ -1334,44 +1334,12 @@ def reconcile_run_integrity(run_name: str) -> dict:
     return reconcile_run(run_name)
 
 
-@frappe.whitelist()
-def opening_balance_audit(company: str) -> dict:
-    """Report which cash/bank accounts are missing an opening balance. Read-only.
-
-    ``suggested_minimum_opening`` is a lower bound derived from the lowest point
-    the running balance reaches — the real opening figure is whatever was
-    actually held and must be supplied by the user.
-    """
-    frappe.has_permission("Cashew Import Run", "read", throw=True)
-
-    from cashew_integration.importer.opening import (
-        audit_opening_balances, suggested_opening_date,
-    )
-    return {
-        "company": company,
-        "suggested_posting_date": suggested_opening_date(company),
-        "accounts": audit_opening_balances(company),
-    }
-
-
-@frappe.whitelist()
-def post_opening_balances(
-    company: str,
-    posting_date: str,
-    balances,
-    opening_account: str | None = None,
-) -> dict:
-    """Post the one-time Opening Entry for *company*.
-
-    ``balances`` is a JSON array of ``{"account", "amount", "exchange_rate"}``
-    with ``amount`` in each account's own currency.
-    """
-    frappe.has_permission("Cashew Import Run", "write", throw=True)
-
-    if isinstance(balances, str):
-        balances = json.loads(balances)
-
-    from cashew_integration.importer.opening import post_opening_entry
-    name = post_opening_entry(company, posting_date, balances, opening_account)
-    frappe.db.commit()
-    return {"status": "ok", "journal_entry": name}
+# Opening-balance audit and posting were REMOVED 2026-08-07 (f012 Decision 7).
+# They existed to solve a problem that does not exist: Petty Cash stood at 0.28
+# on 2026-03-04, the day before the import window, and ERPNext holds exactly
+# that; every other imported wallet opened at zero. Cashew's own running balance
+# for Petty Cash reaches -117,357.72, so the deep negative is what the source
+# data says, not a missing entry. Keeping a "post an opening balance" button
+# around invites plugging a real curve with a made-up number.
+# See importer/opening.py in git history (removed at this commit) if a genuine
+# mid-life account ever needs one.
