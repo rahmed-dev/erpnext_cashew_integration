@@ -1,0 +1,155 @@
+id: f014
+name: Live Deployment & Ledger Corrections (erp.nstack.xyz)
+status: ready-for-dev
+stage: ready-for-dev
+owner: bmad-fb-quick
+status_history: [ready-for-dev]
+
+goal: >
+  Get f013's fixes onto erp.nstack.xyz and correct the two ledger errors they
+  identified, in an order where nothing writes GL before the thing it depends on
+  exists. Split out of f013 on 2026-08-07 because f013's code is done and pushed
+  while its live consequences are not, and tracking both under one "done" feature
+  hid work that still has to happen.
+
+context: >
+  f013 shipped three things that touch the live ledger: a same-currency FX
+  correction (c002) that needs a repost script run, a resync lifecycle (c006/c008)
+  that changes how future imports behave, and a hand-applied correction for one
+  stale loan Journal Entry (c007) that has never been run anywhere.
+
+  The ordering is not cosmetic. The FX repost resolves an exchange rate through
+  _lookup_erp_rate, which only searches BACKWARDS through Currency Exchange —
+  live holds exactly one such record (2026-07-04), so a 2026-05-14 lookup falls
+  through to _lookup_online_rate and the result silently depends on server
+  egress. The rate record has to exist first.
+
+  Deploying the code itself is low-risk in a way worth stating: every existing
+  Cashew Import Row on live has source_pk NULL, and find_prior_postings matches
+  on source_pk IN (...), which NULL never satisfies. The FIRST SQLite import
+  after deploy therefore cannot resync anything — it only stamps source_pk on the
+  rows it creates. Resync can first fire on the SECOND import, which leaves a run
+  to inspect in between.
+
+findings_ref: ../../system-arch/import-integrity-2026-08-07.md
+fixes_ref: ../../system-arch/import-integrity-fixes-2026-08-07.md
+
+components:
+  - id: c001
+    name: Push f013 to origin/main
+    stage: done
+    date: 2026-08-07
+    depends_on: []
+    build_notes: >
+      9cba9d0..384a3ea pushed to rahmed-dev/erpnext_cashew_integration main —
+      seven commits, bf871fb through 384a3ea. bench update --pull cannot see the
+      work otherwise.
+
+  - id: c002
+    name: Deploy code + schema
+    stage: ready
+    depends_on: [c001]
+    plan: >
+      bench update --pull, then bench --site erp.nstack.xyz migrate, then
+      bench build --app cashew_integration. migrate adds source_pk,
+      source_modified, superseded_by, supersedes on Cashew Import Row,
+      rows_resynced on Cashew Import Run, and one Select option
+      (Supersede-Failed). No patch, no data rewrite.
+    verification: >
+      The five fields exist and nothing else moved. /cashew loads and the run
+      workspace renders. Existing runs still read their counters.
+
+  - id: c003
+    name: Currency Exchange 2026-05-14 USD -> PKR 278.60766133
+    stage: ready
+    depends_on: [c002]
+    plan: >
+      Create the record BEFORE c004. _query_currency_exchange_table searches
+      backwards only, and live holds exactly one Currency Exchange row
+      (2026-07-04 USD->PKR 277.0), so a 2026-05-14 lookup falls through to
+      _lookup_online_rate and the reposted figure depends on whether the server
+      can reach the rate provider.
+    verification: >
+      _lookup_erp_rate("USD", "PKR", "2026-05-14") returns 278.60766133 from the
+      table, with no network call.
+
+  - id: c004
+    name: Run repost_same_currency_transfers on live
+    stage: ready
+    depends_on: [c003]
+    plan: >
+      Dry run first (the default), confirm it identifies exactly ONE affected
+      entry, then apply. The live pre-flight already confirmed one affected FX
+      entry, the same count as work.local.
+    verification: >
+      Elevate Pay - CS moves off -1,238.85 PKR / 0.00 USD. Account-currency
+      balances elsewhere are untouched; only two PKR figures move, symmetrically,
+      total unchanged.
+
+  - id: c005
+    name: Fresh live backup restored to work.local
+    stage: blocked
+    depends_on: []
+    blocked_on: >
+      No erp.nstack.xyz backup exists on this machine and none can be taken from
+      here. This is a hard prerequisite the user has to satisfy.
+    plan: >
+      work.local is gutted — 73 Journal Entries, 3 Cashew Import Rows, both
+      150,000.00 Petty Cash GL entries already cancelled, and test_integration's
+      setUpClass fails on missing fixtures (Default Account: Service - CS). It
+      cannot rehearse a GL write and cannot exercise a real import end to end.
+    verification: >
+      correct_stale_loan_je's dry run matches exactly one row on the restored
+      copy, and test_integration's setUpClass gets past the LinkValidationError.
+
+  - id: c006
+    name: Rehearse the resync lifecycle end to end
+    stage: blocked
+    depends_on: [c005]
+    blocked_on: c005
+    plan: >
+      The gap the mocks leave open. All 33 test_resync tests are mock-based; no
+      test drives a real import through screen_resyncs -> post loop ->
+      apply_supersessions, because the only suite that drives a real import
+      cannot start on work.local. On the restored copy, import the 2026-08-07
+      export twice: the first run is inert by construction (every prior row has
+      source_pk NULL) and only stamps source_pk; the second must detect the
+      edited loan, post the replacement, cancel the original exactly once, and
+      leave reconcile_run clean.
+    verification: >
+      Run 1: rows_resynced 0. Run 2: rows_resynced 1, the superseded row carries
+      superseded_by pointing at a live document, and reconcile_run reports clean
+      rather than a "cancelled" issue. A transfer whose leg was edited supersedes
+      its shared JV once, not twice.
+
+  - id: c007
+    name: Apply correct_stale_loan_je to live
+    stage: blocked
+    depends_on: [c005, c002]
+    blocked_on: c005
+    plan: >
+      Rehearse on the restored copy first — it cancels a submitted Journal Entry
+      and reposts against a customer receivable, and it has never run anywhere.
+      Identified by content, not name (ACC-JV-2026-00565 on live,
+      ACC-JV-2026-00375 on work.local); refuses to write unless exactly one row
+      matches; dry run by default.
+    verification: >
+      Petty Cash -1,323.93 -> +2.07 and Customer HC's receivable falls 1,326.00.
+      Cashew reads 0.07, so a 2.00 residual remains BY DESIGN — the PC Build is a
+      13,748.00 Purchase Invoice against Cashew's 13,750.00 note. No other
+      account moves.
+
+open:
+  - >
+    NSave is 18.00 USD above Cashew and no component here addresses it.
+    ACC-JV-2026-00625 books 831.00 against Cashew's 813.00 on 2026-05-30/31,
+    carries no "run:" remark (a manual JE, not an import) and looks like a digit
+    transposition. Deliberately untouched by every fix so far — decide separately
+    whether to correct it.
+  - >
+    ACC-JV-2026-00042 stays cancelled. Restoring it would move ERPNext AWAY from
+    Cashew. Flagged Cancelled Externally so it reads as a decision, not drift.
+  - >
+    Detection covers FUTURE imports only. source_pk cannot be derived for rows
+    already imported, so the existing history is unprotected. The user's call:
+    "we will just be careful and use the tool for future entries."

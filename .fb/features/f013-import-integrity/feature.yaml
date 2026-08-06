@@ -213,11 +213,14 @@ components:
 
 open:
   - >
-    c007 NOT applied. work.local cannot rehearse it — the site is gutted (73 Journal
-    Entries, 3 Cashew Import Rows, both 150,000.00 Petty Cash GL entries already
-    cancelled; an earlier "165 Petty Cash entries" count in this record wrongly included
-    cancelled rows). A fresh erp.nstack.xyz backup is a hard prerequisite. Until then the
-    script is exercised only under mocks.
+    MOVED TO f014 on 2026-08-07. Everything left over from this feature is a LIVE
+    action, not code: deploying to erp.nstack.xyz, the Currency Exchange record the FX
+    repost depends on, the repost itself, and applying c007 — which has never run
+    anywhere, because work.local is gutted (73 Journal Entries, 3 Cashew Import Rows,
+    both 150,000.00 Petty Cash GL entries already cancelled; an earlier "165 Petty Cash
+    entries" count in this record wrongly included cancelled rows) and a fresh live
+    backup is a hard prerequisite. Tracking those under a feature marked done hid work
+    that still has to happen. See features/f014-live-deployment/feature.yaml.
+    Code for c001-c006 and c008 is done and pushed (9cba9d0..384a3ea).
   - ACC-JV-2026-00042 recommended to stay cancelled — restoring it moves ERPNext AWAY
     from Cashew. Now flagged Cancelled Externally so it reads as a decision.
-  - Not deployed to erp.nstack.xyz.
