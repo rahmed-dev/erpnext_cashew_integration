@@ -175,6 +175,34 @@ components:
       strong but a manual /cashew click-through is the last confirmation. NOT git-committed.
 
 patches:
+  - id: p004
+    name: Make SQLite the default import path (CSV retained as an option)
+    date: 2026-08-07
+    component: c002, c005
+    stage: not-started
+    summary: >
+      User direction: SQL is the better import, so it should be the default rather than
+      the opt-in. Flip `Cashew Import Run.source_type` default from CSV to SQLite; the SPA
+      upload surface opens on the SQLite toggle and the dropzone's default accept list
+      becomes .sql / .sqlite / .db. CSV stays fully supported — this changes the default,
+      it does not remove a path.
+      WHY: the SQLite backup is Cashew's source of truth; the CSV export is a derived,
+      flattened view that already caused a real incident (the balance mismatch f011 exists
+      to fix — CSV silently omitted rows). SQL also carries data CSV has no column for:
+      FK-authoritative transfer pairing (paired_transaction_fk), stable transaction_pk /
+      budget_pk UUIDs, and the budgets + objectives tables. Defaulting to the weaker format
+      invited the omission bug on every run.
+      SCOPE: (1) source_type field default in cashew_import_run.json + bench migrate;
+      (2) UploadSection.vue segmented toggle initial state; (3) CsvDropzone.vue default
+      accept list; (4) setup wizard + docs copy describing SQL as the normal path and CSV
+      as the fallback.
+      NOT A BEHAVIOUR CHANGE FOR EXISTING RUNS — source_type is stored per run.
+      SIDE EFFECT, intended: import_from_date / import_to_date (depends_on
+      source_type=='SQLite') become visible by default. A blank window still means the
+      whole backup, so default behaviour is unchanged.
+      KNOCK-ON: f012 goals and spending limits (c012 / c013) exist only on the SQL path,
+      so this makes them reachable by default rather than opt-in.
+      Arch record: system-arch/decisions-log.md, "SQLite Becomes the Default Import Path".
   - id: p002
     name: Mobile/PWA file picker would not let you select a file
     date: 2026-08-07

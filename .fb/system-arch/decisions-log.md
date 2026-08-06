@@ -233,6 +233,40 @@ needs daily granularity as the floor. A partial trailing cycle is shown and mark
 - **Invoice KPI card** = volume and value of SI/PI posted in the period, not outstanding AR/AP
   (`auto_settle_cash` defaults true, so open AR/AP is empty by construction).
 
+## Cashew Schema Facts — Budgets, PKs, Dates — 2026-08-07 (f012 coherence pass)
+
+Established by scanning `cashew-2026-08-07-00-20-33-593933.sql` (652
+transactions). These are properties of the Cashew schema, not of f012, and bind
+on any future code that reads a Cashew backup.
+
+- **Primary keys are opaque strings, not UUIDs.** `categories.category_pk` and
+  `wallets.wallet_pk` are TEXT, and Cashew's seeded defaults use small integer
+  strings — category `"0"` is Balance Correction, `"5"` is Entertainment, wallet
+  `"0"` is Investment. Live user data references them. Never validate a Cashew
+  FK against a UUID pattern and never coerce one; a `uuid.UUID()` parse drops
+  real rows silently.
+- **`budgets` date columns are Unix epoch seconds**, not ISO strings. Convert in
+  the site timezone, same discipline as f011 c001 — a UTC conversion moves an
+  anchor to the previous day and shifts every derived cycle boundary.
+- **A budget's account scope is `wallet_fks`, not the scalar `wallet_fk`.**
+  NULL or `[]` in `wallet_fks` means all wallets; the scalar is a display and
+  currency anchor that takes no part in matching. Reading the scalar as the
+  scope changed one real budget's monthly figure by 2,256.
+- **`budgets.start_date` is the recurrence anchor; `end_date` ends the first
+  period only.** Both of the user's live budgets carry an August 2025 end_date.
+  Deriving an active window from `end_date` marks every recurring budget
+  expired. `archived` is the real inactive signal.
+- **`budgets.reoccurrence` cannot be validated from any export.** Every
+  transaction and every budget in both the July and August exports carries the
+  identical `(reoccurrence 3, period_length 1)`, including one-off paid rows
+  that do not recur — so `3/1` is a default stamp, not evidence. The assumed
+  mapping is `{0 custom, 1 daily, 2 weekly, 3 monthly, 4 yearly}`. Any code
+  decoding it must **raise on an unrecognised value rather than default to
+  monthly**: a wrong cycle silently misstates every budget figure downstream.
+- **`budgets.budget_transaction_filters` is undocumented** (`[6]` and `[5]` on
+  the two live rows) and is deliberately ignored. First suspect if an ERP budget
+  figure ever disagrees with what Cashew shows on screen.
+
 ### f011 Schema Scan — RESOLVED — 2026-07-04
 Scanned the real Cashew SQLite file (Drift schema v48, 553 txns). Plan §5 is dev-ready.
 Key parity rules locked: currency `.upper()` (DB lowercase vs CSV uppercase); epoch→site-tz

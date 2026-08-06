@@ -1,0 +1,435 @@
+<title>Cashew Finance Dashboard — f012 Demo</title>
+<style>
+:root {
+  --ground: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #fbfbfc;
+  --border: #e4e5e9;
+  --border-strong: #d3d4da;
+  --text: #16161a;
+  --text-muted: #6b6d78;
+  --text-faint: #9a9ca6;
+
+  --accent: #4f46e5;
+  --accent-700: #4338ca;
+  --accent-100: #e0e7ff;
+  --accent-50: #eef2ff;
+
+  --income: #0f9d76;
+  --expense: #e11d48;
+  --transfer: #8b8d98;
+  --warn: #b45309;
+
+  --c1: #4f46e5; --c2: #0d9488; --c3: #d97706; --c4: #e11d48; --c5: #7c3aed;
+  --c6: #0891b2; --c7: #65a30d; --c8: #ea580c; --c9: #be185d; --c10: #475569;
+
+  --grid: #eceef2;
+  --axis: #a8aab4;
+
+  --radius-card: 10px;
+  --radius-ctl: 6px;
+
+  --font: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #111114;
+    --surface: #191a1f;
+    --surface-2: #1e1f25;
+    --border: #2b2c33;
+    --border-strong: #3a3b44;
+    --text: #eceef2;
+    --text-muted: #9fa1ac;
+    --text-faint: #6e7079;
+
+    --accent: #7c74f0;
+    --accent-700: #9a94f5;
+    --accent-100: #2a2760;
+    --accent-50: #21204a;
+
+    --income: #34d399;
+    --expense: #fb7185;
+    --transfer: #7c7e8a;
+    --warn: #fbbf24;
+
+    --c1: #7c74f0; --c2: #2dd4bf; --c3: #fbbf24; --c4: #fb7185; --c5: #a78bfa;
+    --c6: #22d3ee; --c7: #a3e635; --c8: #fb923c; --c9: #f472b6; --c10: #94a3b8;
+
+    --grid: #26272e;
+    --axis: #5d5f68;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #111114; --surface: #191a1f; --surface-2: #1e1f25;
+  --border: #2b2c33; --border-strong: #3a3b44;
+  --text: #eceef2; --text-muted: #9fa1ac; --text-faint: #6e7079;
+  --accent: #7c74f0; --accent-700: #9a94f5; --accent-100: #2a2760; --accent-50: #21204a;
+  --income: #34d399; --expense: #fb7185; --transfer: #7c7e8a; --warn: #fbbf24;
+  --c1: #7c74f0; --c2: #2dd4bf; --c3: #fbbf24; --c4: #fb7185; --c5: #a78bfa;
+  --c6: #22d3ee; --c7: #a3e635; --c8: #fb923c; --c9: #f472b6; --c10: #94a3b8;
+  --grid: #26272e; --axis: #5d5f68;
+}
+:root[data-theme="light"] {
+  --ground: #f6f7f9; --surface: #ffffff; --surface-2: #fbfbfc;
+  --border: #e4e5e9; --border-strong: #d3d4da;
+  --text: #16161a; --text-muted: #6b6d78; --text-faint: #9a9ca6;
+  --accent: #4f46e5; --accent-700: #4338ca; --accent-100: #e0e7ff; --accent-50: #eef2ff;
+  --income: #0f9d76; --expense: #e11d48; --transfer: #8b8d98; --warn: #b45309;
+  --c1: #4f46e5; --c2: #0d9488; --c3: #d97706; --c4: #e11d48; --c5: #7c3aed;
+  --c6: #0891b2; --c7: #65a30d; --c8: #ea580c; --c9: #be185d; --c10: #475569;
+  --grid: #eceef2; --axis: #a8aab4;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app { display: flex; min-height: 100vh; }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  width: 220px;
+  flex: 0 0 220px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 8px; border-radius: var(--radius-ctl);
+  font-weight: 600; letter-spacing: -0.01em;
+}
+.brand svg { flex: 0 0 22px; }
+.brand small { display: block; font-weight: 400; font-size: 11px; color: var(--text-faint); letter-spacing: 0; }
+.nav { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.nav a {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px; border-radius: var(--radius-ctl);
+  color: var(--text-muted); text-decoration: none; font-size: 13px;
+}
+.nav a.active { background: var(--accent-50); color: var(--accent-700); font-weight: 550; }
+.nav a:not(.active):hover { background: var(--surface-2); color: var(--text); }
+.nav a:focus-visible, .ctl:focus-visible, .seg button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.rt { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-faint); }
+.dot { width: 6px; height: 6px; border-radius: 999px; background: var(--income); }
+.userchip { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.avatar {
+  width: 24px; height: 24px; border-radius: 999px; background: var(--accent-100);
+  color: var(--accent-700); display: grid; place-items: center; font-size: 11px; font-weight: 600;
+}
+
+/* ---------- main ---------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 22px; border-bottom: 1px solid var(--border);
+  background: var(--surface); position: sticky; top: 0; z-index: 20;
+}
+.topbar h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.015em; }
+.topbar .sub { font-size: 12px; color: var(--text-faint); margin-top: 1px; }
+.spacer { flex: 1; }
+.ctl {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-ctl);
+  background: var(--surface); color: var(--text); font-size: 13px; font-family: inherit;
+  cursor: pointer;
+}
+.ctl:hover { background: var(--surface-2); }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-ctl); overflow: hidden; }
+.seg button {
+  height: 30px; padding: 0 11px; border: 0; background: var(--surface);
+  color: var(--text-muted); font-size: 12.5px; font-family: inherit; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent-50); color: var(--accent-700); font-weight: 550; }
+
+.content { padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 22px; }
+
+/* ---------- notice ---------- */
+.notice {
+  display: flex; gap: 10px; align-items: flex-start;
+  border: 1px solid var(--border); border-left: 3px solid var(--warn);
+  background: var(--surface); border-radius: var(--radius-card); padding: 11px 13px;
+  font-size: 12.5px; color: var(--text-muted);
+}
+.notice strong { color: var(--text); font-weight: 600; }
+
+/* ---------- section ---------- */
+.section { display: flex; flex-direction: column; gap: 11px; }
+.section-head { display: flex; align-items: baseline; gap: 10px; }
+.section-head h2 {
+  margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.section-head .rule { flex: 1; height: 1px; background: var(--border); }
+
+/* ---------- cards ---------- */
+.grid { display: grid; gap: 12px; }
+.kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.two { grid-template-columns: 1.55fr 1fr; }
+.two-even { grid-template-columns: 1fr 1fr; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-card); padding: 14px;
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+}
+.card-head { display: flex; align-items: flex-start; gap: 8px; }
+.card-head h3 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -0.005em; }
+.card-head p { margin: 1px 0 0; font-size: 11.5px; color: var(--text-faint); }
+
+.kpi { gap: 6px; padding: 13px 14px; }
+.kpi .label { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; }
+.kpi .value {
+  font-size: 23px; font-weight: 600; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+}
+.kpi .value .ccy { font-size: 12px; font-weight: 500; color: var(--text-faint); margin-right: 3px; }
+.kpi .foot { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-muted); }
+.kpi .spark { height: 26px; margin: -2px 0 -4px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 550;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted);
+}
+.pill.up { color: var(--income); border-color: color-mix(in srgb, var(--income) 30%, transparent); background: color-mix(in srgb, var(--income) 9%, transparent); }
+.pill.down { color: var(--expense); border-color: color-mix(in srgb, var(--expense) 30%, transparent); background: color-mix(in srgb, var(--expense) 9%, transparent); }
+.pill.mute { color: var(--text-faint); }
+
+.chart { width: 100%; }
+.h-260 { height: 260px; } .h-220 { height: 220px; } .h-300 { height: 300px; }
+.h-180 { height: 180px; } .h-330 { height: 330px; }
+
+/* ---------- goal gauge empty ---------- */
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 7px; text-align: center; padding: 26px 16px; color: var(--text-faint);
+  border: 1px dashed var(--border-strong); border-radius: 8px; font-size: 12.5px;
+}
+.empty strong { color: var(--text-muted); font-size: 13px; font-weight: 600; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--text-muted); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.swatch { width: 9px; height: 9px; border-radius: 2px; }
+
+.footnote { font-size: 11.5px; color: var(--text-faint); line-height: 1.6; }
+.footnote code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); border: 1px solid var(--border); padding: 0 4px; border-radius: 3px; }
+
+@media (max-width: 1100px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .two, .two-even { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .sidebar { display: none; }
+  .content { padding: 14px 13px 34px; }
+  .topbar { padding: 12px 13px; }
+  .kpis { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+</style>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2a10 10 0 1 0 10 10h-10V2z" fill="var(--accent)"/>
+        <path d="M14 2.4A10 10 0 0 1 21.6 10H14V2.4z" fill="var(--accent)" opacity=".45"/>
+      </svg>
+      <span>Cashew<small>Code.Solutions</small></span>
+    </div>
+    <nav class="nav">
+      <a href="#" class="active" aria-current="page">Dashboard</a>
+      <a href="#">Imports</a>
+      <a href="#">Settings</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="rt"><span class="dot"></span> Live</div>
+      <div class="userchip"><span class="avatar">RA</span> Riz Ahmed</div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <h1>Finance Dashboard</h1>
+        <div class="sub" id="periodSub"></div>
+      </div>
+      <div class="spacer"></div>
+      <div class="seg" role="group" aria-label="Period">
+        <button type="button" data-window="month" aria-pressed="false">Latest month</button>
+        <button type="button" data-window="six" aria-pressed="false">Last 6 months</button>
+        <button type="button" data-window="all" aria-pressed="true">All time</button>
+      </div>
+      <button class="ctl" type="button">Code.Solutions</button>
+      <button class="ctl" type="button" id="themeBtn" aria-label="Toggle theme">Theme</button>
+    </header>
+
+    <div class="content">
+
+      <div class="notice">
+        <div>
+          <strong>No opening balances have been imported.</strong>
+          Cashew history starts 2025-02-05 with nothing before it, so every balance
+          sits on a floor of zero and net worth plots deeply negative through late 2025.
+          This is a data gap, not a charting bug — a one-time Opening Entry fixes it.
+        </div>
+      </div>
+
+      <!-- KPI row -->
+      <section class="section">
+        <div class="section-head"><h2>Overview</h2><div class="rule"></div></div>
+        <div class="grid kpis">
+          <div class="card kpi">
+            <div class="label">Total expense</div>
+            <div class="value" id="kExpense"></div>
+            <div class="spark chart" id="sparkExpense"></div>
+            <div class="foot"><span class="pill down" id="kExpenseTrend"></span> vs prior period</div>
+          </div>
+          <div class="card kpi">
+            <div class="label">Total income</div>
+            <div class="value" id="kIncome"></div>
+            <div class="spark chart" id="sparkIncome"></div>
+            <div class="foot"><span class="pill up" id="kIncomeTrend"></span> vs prior period</div>
+          </div>
+          <div class="card kpi">
+            <div class="label">Net</div>
+            <div class="value" id="kNet"></div>
+            <div class="spark chart" id="sparkNet"></div>
+            <div class="foot"><span class="pill mute">income less expense</span></div>
+          </div>
+          <div class="card kpi">
+            <div class="label">Invoices posted</div>
+            <div class="value" id="kInv"></div>
+            <div class="foot" id="kInvFoot"></div>
+            <div class="foot"><span class="pill mute" id="kJe"></span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Trends -->
+      <section class="section">
+        <div class="section-head"><h2>Trends</h2><div class="rule"></div></div>
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3>Income vs expense</h3>
+                <p>Monthly, company currency. Net line overlaid.</p>
+              </div>
+            </div>
+            <div class="chart h-300" id="cTrend"></div>
+          </div>
+          <div class="card" id="goalCard">
+            <div class="card-head">
+              <div>
+                <h3 id="goalTitle">Savings goal</h3>
+                <p id="goalSub"></p>
+              </div>
+            </div>
+            <div class="chart h-220" id="cGauge"></div>
+            <div class="legend" id="goalScope"></div>
+          </div>
+        </div>
+
+        <div class="card" id="limitCard">
+          <div class="card-head">
+            <div>
+              <h3>Spending limits</h3>
+              <p id="limitSub"></p>
+            </div>
+          </div>
+          <div class="chart h-220" id="cBudget"></div>
+        </div>
+
+        <div class="grid two-even">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3>Net worth</h3>
+                <p>Running total across all accounts</p>
+              </div>
+            </div>
+            <div class="chart h-260" id="cNetworth"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3>Balance by account</h3>
+                <p>Where the money sits, month by month</p>
+              </div>
+            </div>
+            <div class="chart h-260" id="cAccounts"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Breakdown -->
+      <section class="section">
+        <div class="section-head"><h2>Where it goes</h2><div class="rule"></div></div>
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3>Expense categories</h3>
+                <p>Area is spend. 37 categories, largest first.</p>
+              </div>
+            </div>
+            <div class="chart h-330" id="cTreemap"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <h3>Spending rhythm</h3>
+                <p>One cell per day, darker is a heavier day</p>
+              </div>
+            </div>
+            <div class="chart h-330" id="cCalendar"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Flow -->
+      <section class="section">
+        <div class="section-head"><h2>Money flow</h2><div class="rule"></div></div>
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>Income sources → accounts → spending</h3>
+              <p>Top 6 sources and top 6 expense categories. Ribbon width is amount.</p>
+            </div>
+          </div>
+          <div class="chart h-330" id="cSankey"></div>
+        </div>
+      </section>
+
+      <p class="footnote" id="foot"></p>
+    </div>
+  </div>
+</div>
+
+<script>/*ECHARTS*/</script>
+<script>var DATA = /*DATA*/;</script>
+<script>/*APP*/</script>

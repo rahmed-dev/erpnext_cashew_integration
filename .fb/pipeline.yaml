@@ -1,141 +1,109 @@
 stage: dev
-feature: f006
-assigned_to: bmad-fb-orch
-status: awaiting-gate
+feature: f012
+assigned_to: bmad-fb-quick
+status: ready-for-dev
 
 summary: |
-  Dev pass complete (2026-05-03). All 8 components implemented per
-  approved specs and persisted under .fb/features/f006-rules-clarity-and-party-resolution/.
-  Each component flipped from spec to stage=pending-review in feature.yaml.
+  Architecture closed 2026-08-07. f012 Dashboard Analytics & Charts is ready to
+  build in Quick dev mode — one agent plays every role, no TD/UI/Review handoff.
 
-  Components shipped:
-    - c001 schema-loan-and-category-type        pending-review
-    - c002 parser-loan-routing                   pending-review
-    - c003 mapping-engine-simplification         pending-review
-    - c004 posting-loan-handler                  pending-review
-    - c005 validation-error-prefix               pending-review
-    - c006 vue-row-explorer-page                 pending-review
-    - c007 import-run-form-slim                  pending-review
-    - c008 loan-accounts-guard                   pending-review
+  A pre-dev coherence pass (arch/decisions.md "Decision 5") reconciled the
+  record and resolved every open question. It also scanned a FRESH Cashew export
+  (cashew-2026-08-07-00-20-33-593933.sql, 652 transactions) that replaced the
+  2026-07-04 file the earlier decisions were grounded in, and that scan changed
+  several recorded facts.
 
-  Key implementation notes (deviations / decisions taken at build time):
-    - c008 dedupes its loan-account-class table by reading c001's
-      existing _CATEGORY_TYPE_EXPECTATIONS in validation.py instead
-      of duplicating a separate _LOAN_TYPE_REQUIREMENTS dict (the
-      "minor refactor opportunity" the spec flagged as optional).
-    - c003 wires validate_party_present from inside _validate_single_row
-      (replacing the pre-c003 PARTY_UNRESOLVED block) — single per-row
-      pass, same code path used by api.validate_import → queue-time.
-    - c004 matches the existing posting handler trace pattern
-      (cashew_import_run / cashew_row_hash / cashew_row_idx custom fields)
-      rather than the cheque_no shape shown in the spec sample. The
-      existing pattern is what idempotency.py + f004 revert read from.
-      DR/CR per-leg derivation collapses to a uniform `if income`
-      branch — receivable vs payable differs only in party_type.
-    - c006 collapses the spec's 9-SFC tree into a single
-      cashew_row_explorer.bundle.js with components defined inline as
-      Vue 3 object-with-template-string components. No SFC loader, no
-      package.json, no separate esbuild config — Frappe v15's bench
-      build picks up *.bundle.js directly. Optional v1 nice-to-haves
-      from spec (CSV export, vue-virtual-scroller) deferred — not in
-      bundle. _ROW_EXPLORER_MUTATION_ALLOWED_STATUSES uses the actual
-      Cashew Import Run status enum from this codebase (Draft / Parsed /
-      Validated / Failed / Cancelled / Revert-Failed), not the spec's
-      enum which mixed in non-existent values like "Validated" alongside
-      missing "Parsed".
+  Ten findings, C5.1 to C5.10 in arch/decisions.md:
+    C5.1  budgets.wallet_fks is the account scope; the scalar wallet_fk is NOT.
+          Corrects the recorded scope of the "Food outdoor" budget. The two
+          readings differ by 2,256 on 2026-07 alone.
+    C5.2  category_fks_exclude exists and was missing from the matching rule.
+          The complete rule is now written out.
+    C5.3  Cashew PKs are NOT always UUIDs — seeded defaults are integer strings
+          ("0" = Balance Correction) and the user's savings budget uses one.
+    C5.4  Budget dates are epoch seconds, converted in the SITE timezone.
+    C5.5  budget_transaction_filters is an undocumented dimension, deliberately
+          ignored. Recorded as a known unknown. The reoccurrence enum is still
+          unverifiable — the raise-on-unrecognised guard is the only protection.
+    C5.6  Dark mode contradiction resolved: the SPA has zero dark: utilities.
+          Out of scope, and the demo's theme toggle must NOT be ported.
+    C5.7  Stale supersessions cleaned up — no savings_target_amount field, no
+          pro-rating, no sunburst, no Cashew Goal doctype, no objectives import.
+    C5.8  c002 RESOLVED: three blocks (always-daily daily_spend, adaptive series
+          at a 92-day switch, server-side budget_cycles) and balance history as
+          running GL sums with a prefix sum. Retires the "daily floor" rule.
+    C5.9  c001 RESOLVED: vue-echarts, confined to one file.
+    C5.10 c012 RESOLVED: the importer is transaction-only, so budgets get a
+          separate read_budgets() path outside the row pipeline.
 
-  Required before user smoke-test:
-    1. `bench build --app cashew_integration` to bundle the Vue page
-       (cashew_row_explorer.bundle.js + page asset registration).
-    2. `bench --site <site> migrate` to register the new Page doctype
-       record (cashew-row-explorer).
-    3. `bench restart` (or `bench --site <site> clear-cache`) to pick up
-       new whitelisted API endpoints.
+  Also updated: f013 Import Integrity is DONE and closes most of the
+  data-quality caveat that hung over this feature.
 
-  Files added:
-    - cashew_integration/cashew_integration/page/cashew_row_explorer/
-        __init__.py
-        cashew_row_explorer.json
-        cashew_row_explorer.js
-    - cashew_integration/cashew_integration/page/__init__.py
-    - cashew_integration/public/js/cashew_row_explorer.bundle.js
-    - cashew_integration/cashew_integration/doctype/cashew_category_mapping/
-        cashew_category_mapping.js  (per-row Account link filter — c001)
-    - cashew_integration/importer/category_lookup.py  (shared
-        category-type map — c002)
-    - cashew_integration/importer/errors.py            (single error
-        write entry point with [Row N] prefix — c005)
+prerequisite: |
+  NONE. The opening-balance prerequisite recorded here earlier was WITHDRAWN on
+  2026-08-07 — do not reinstate it.
 
-  Files modified:
-    - cashew_integration/api.py
-        + row_explorer_load / row_explorer_set_party / row_explorer_revalidate
-    - cashew_integration/importer/parser.py
-        + _assign_txn_type Decision-1 4-route table (c002)
-    - cashew_integration/importer/mapping.py
-        + delegate _build_category_map to category_lookup
-        + strip auto-party fallback; pre-fill resolved_party_type only (c003)
-    - cashew_integration/importer/validation.py
-        + check_category_account_class (c001)
-        + _category_mapping_for helper (c001)
-        + check_loan_account_class_exists (c008)
-        + validate_party_present (c003)
-        + CATEGORY_ACCOUNT_CLASS_MISMATCH wired in _validate_single_row
-        + PARTY_UNRESOLVED replaced by validate_party_present
-    - cashew_integration/importer/posting.py
-        + _post_loan_je + Loan Receivable / Loan Payable JE branches (c004)
-    - cashew_integration/importer/idempotency.py + worker.py + diagnostics.py
-        + routed all per-row error / skip writes through the c005 helper
-    - cashew_integration/cashew_integration/doctype/cashew_import_row/
-        cashew_import_row.json — Loan Receivable / Loan Payable
-        added to txn_type + resolved_route enums (c001)
-    - cashew_integration/cashew_integration/doctype/cashew_category_mapping/
-        cashew_category_mapping.json — category_type Select added (c001)
-        cashew_category_mapping.py — validate runs c008 then c001 predicates
-    - cashew_integration/cashew_integration/doctype/cashew_import_run/
-        cashew_import_run.json — default_customer / default_supplier hidden=1 (c001)
-        cashew_import_run.js — "Open in Row Explorer" button added (c007)
+  It claimed c005, c008 and c010 could not be built until opening balances were
+  posted, because the ledger floors at zero and Petty Cash reaches -132,313.22.
+  The 2026-08-07 Cashew SQLite export settles it: Petty Cash opened at 0.28 and
+  ERPNext already holds exactly that; every other imported wallet opened at zero.
+  Cashew's own running balance for Petty Cash reaches -117,357.72 on 2026-01-01,
+  so a deeply negative curve is what the source data actually says, not a missing
+  opening entry. Working: system-arch/import-integrity-2026-08-07.md, finding 1.
+
+  importer/opening.py stays as a general capability. There is nothing to post for
+  this company, so the three components are ungated — build them in wave 2 with
+  the rest.
+
+  Real balance caveats, neither of which blocks any component:
+    - Elevate Pay reads -1,238.85 PKR on live until the f013 repost script runs
+      (one entry, ACC-JV-2026-00275). Fixed already on work.local.
+    - NSave is 18.00 USD above Cashew, from a manual JE (ACC-JV-2026-00625, 831.00
+      against Cashew's 813.00), and Petty Cash is 1,324.00 PKR below it for
+      reasons not yet traced.
 
 dev_handoff: |
-  Ready for Orch review. Suggested gate sequence:
+  Read in this order: features/f012-dashboard-analytics/feature.yaml, then
+  arch/decisions.md (Decision 5 first — where it disagrees with anything above
+  it, Decision 5 wins), then demo/README.md.
 
-  1. Static review of each component diff against its spec —
-     start with c001 (schema), then c005 (error helper) since
-     everything else builds on those.
-  2. Run `bench build --app cashew_integration && bench restart`,
-     then exercise the user's loan row from
-     cashew-2026-05-03-06-31-00-370944.csv (category=Lent, USD -360.70):
-       a. Ensure a Receivable Asset account exists (c008 guard test).
-       b. Save a Cashew Category Mapping `Lent → Loan Out` pointing at
-          that account — should pass c001 + c008 predicates.
-       c. Parse + preview the CSV — Lent row should land with
-          txn_type=Loan Receivable, resolved_route="Loan Receivable JE",
-          requires_party-style validation flagging LOAN_PARTY_MISSING
-          until party is set.
-       d. Open /app/cashew-row-explorer/<run-name> — should mount the
-          Vue page; pick a Customer for the Lent row inline; status pill
-          flips Error → Valid.
-       e. Queue the run — Loan Receivable JE posts with party on the
-          receivable line.
-       f. Revert the run via existing f004 path — JE cancels; party
-          ledger reflects the reversal.
-  3. Manual UI checks not covered by code:
-       - Vue bundle loads without console errors.
-       - Five preset toggle works.
-       - Bulk party set on a multi-row selection.
-       - Re-validate button picks up live category_type edits.
+  Build order:
+    Wave 1, gates, all three independent and parallelisable:
+      c001  ECharts swap + <CsChart> + locked palette + port IncomeExpenseChart
+      c002  dashboard_summary time-series extension (three blocks)
+      c012  Cashew Budget import
+    Wave 2, one chart or card each:
+      c003 c004 c006 c007 c009 c013   — buildable immediately after wave 1
+      c005 c008 c010                  — also buildable; the opening-balance gate
+                                        that used to hold these was withdrawn
+    Wave 3:
+      c011  layout restructure + mobile, last, against real components
 
-  Known gaps / deferrals:
-    - No automated unit / integration test suite was added in this
-      pass (specs called for tests but none were authored). Worth a
-      gate decision: ship now and add tests in a follow-up, or block
-      the gate on a test pass.
-    - Vue bundle has not been browser-smoke-tested by the agent —
-      bench build output and any runtime errors are unverified.
+  Four traps that will cost a day each if missed:
+    1. zrender does not understand CSS color-mix(). Translucent fills must be
+       rgba() built from the token hex or they render black with no error.
+       demo/dashboard-demo.app.js has the working alpha() helper.
+    2. budgets.wallet_fks NULL means ALL wallets. The scalar wallet_fk is a
+       display anchor, not a filter.
+    3. Cashew *_pk / *_fk are opaque strings. A UUID parse or regex silently
+       drops the Balance Correction leg of the user's savings budget.
+    4. Budget start_date is the recurrence ANCHOR; end_date ends the FIRST
+       period only. Deriving the window from end_date marks every budget
+       expired. `archived` is the real inactive signal.
+
+  Adjacent, independent, not a dependency: f011 p004 makes SQLite the default
+  import path. c012's budgets only ever arrive on the SQLite path, so doing
+  p004 first is coherent, but f012 does not block on it.
 
 manual_verification:
-  - Spec → diff walk: open each specs/cNNN-spec.md alongside the
-    affected files (listed in the dev_handoff above).
-  - Run the bench build / restart sequence in dev_handoff §2 before
-    any manual UI verification.
-  - Loan-row end-to-end against the user's real CSV is the highest-
-    signal test — exercises c001/c002/c003/c004/c006/c008 in one path.
+  - Browser pass over /cashew at desktop and phone widths.
+  - Bundle-size check confirming the tree-shaken ECharts import and the total
+    absence of apexcharts / vue3-apexcharts.
+  - Import the 2026-08-07 export and confirm the two live budgets reproduce the
+    figures recorded in the c009 / c013 component notes.
+
+previous_handoff: |
+  f006 Rules Clarity & Party Resolution was left at stage=dev,
+  status=awaiting-gate (2026-05-03). That full handoff record is preserved at
+  features/f006-rules-clarity-and-party-resolution/pipeline-handoff-2026-05-03.yaml.
+  It is still ungated.
