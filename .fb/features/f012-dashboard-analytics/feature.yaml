@@ -49,6 +49,46 @@ review_2026_08_07: >
   "Goals and limits" heading shows when only limits exist; and _load_budgets
   scans GL from the earliest budget start_date rather than the filter start.
 
+first_browser_pass_2026_08_07: >
+  The feature was opened in a browser for the first time on the live site and
+  three defects surfaced that no amount of unit testing would have caught.
+
+  DEPLOY, not code: cashew.html is committed and hardcodes the build's asset
+  hashes, while public/frontend/ is gitignored. A server that pulls without
+  building serves a shell naming files it does not have. Worse, the resulting
+  404 came back with Cache-Control max-age=14400, so browsers kept replaying it
+  for four hours after the build fixed the files — and because vite hashes are
+  content-derived, an unchanged rebuild reproduces the same names and the stale
+  entry still matches. Worth making cashew.html resolve the manifest at request
+  time, the way CashewPWAFile already does for the service worker.
+
+  THE FISCAL YEAR WAS THE CALENDAR YEAR. resolvePeriodRange took a
+  fiscalYearStart through its second argument and fell back to January 1 when
+  absent; no caller ever passed one, so the fallback was the only path that ever
+  ran. On a site whose fiscal year is July to June this handed the reader six
+  months of the previous year under a "This Fiscal Year" label. Fixed by
+  resolving the fiscal year server-side into the boot dict (cashew.py
+  _current_fiscal_year) and reading it inside the resolver rather than at each
+  call site, so a new caller cannot reintroduce it by forgetting an argument.
+  The preset now relabels itself "This Year" when the site has no Fiscal Year
+  record, rather than making a claim about books that nothing supports.
+
+  "(OTHER)" NAMED NOTHING. Four independent top-N folds — _top_n_series,
+  the balances fold in _balance_blocks, _top_n_with_other in api.py, and
+  _fold_flow_nodes — each emitted an amount the reader could not attribute to
+  anything, resolvable only by leaving the dashboard for a Desk report. All four
+  now carry a `members` list, and the four surfaces show it: treemap tooltip
+  plus a footnote naming every one, account-balance footnote, donut list as a
+  collapsed <details>, sankey node tooltip. Tests in
+  TestOtherFoldsNameTheirMembers cover all four together, because the failure is
+  identical in each and a fifth fold that forgets would otherwise pass silently.
+
+  STILL OPEN from the same sweep: boot serves `system_timezone` and no frontend
+  code reads it — every "today" in the SPA is the browser's, not the site's, so
+  a user in another timezone can land in the wrong bucket at a period boundary.
+  Same shape as the fiscal-year bug (a server-owned value supplied and ignored),
+  lower impact on a single-timezone deployment.
+
 build_mode: >
   Quick dev (user direction 2026-08-07) — no TD/UI/Review handoffs; one agent
   plays every role, same pattern as f010 and f011. Architecture is closed: the
