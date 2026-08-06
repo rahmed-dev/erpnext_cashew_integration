@@ -27,9 +27,17 @@ const TABLES = {
     Error:   { label: 'Error',   cls: 'bg-red-100 text-red-700' },
     Skipped: { label: 'Skipped', cls: 'bg-gray-200 text-gray-700' },
   },
+  // Fixed hues, not accent: these encode "is my ledger still what this row claims",
+  // which must read the same under every accent preset. Split by severity —
+  // red means the GL is gone and the row still claims it, sky/gray mean the app
+  // corrected itself on purpose and the row is accounted for.
   'row-revert': {
-    Reverted:        { label: 'Reverted',      cls: 'bg-amber-100 text-amber-800' },
-    'Revert-Failed': { label: 'Revert Failed', cls: 'bg-red-100 text-red-800' },
+    Reverted:               { label: 'Reverted',       cls: 'bg-amber-100 text-amber-800' },
+    'Revert-Failed':        { label: 'Revert Failed',  cls: 'bg-red-100 text-red-800' },
+    'Cancelled Externally': { label: 'Cancelled Outside', cls: 'bg-red-100 text-red-800' },
+    'Deleted Externally':   { label: 'Deleted Outside',   cls: 'bg-red-100 text-red-800' },
+    Resynced:               { label: 'Resynced',       cls: 'bg-sky-100 text-sky-800' },
+    Superseded:             { label: 'Superseded',     cls: 'bg-gray-200 text-gray-600' },
   },
   'txn-type': {
     Income:              { label: 'Income',             cls: 'bg-green-50 text-green-700' },

@@ -29,6 +29,7 @@ from frappe.utils import now
 from cashew_integration.importer.errors import set_row_validation_error
 from cashew_integration.importer.idempotency import apply_idempotency_guard
 from cashew_integration.importer.posting import post_row, post_transfer_pair
+from cashew_integration.importer.resync import RESYNCED, apply_resync
 from cashew_integration.importer.realtime import emit_row_update, emit_run_progress
 from cashew_integration.importer.validation import validate_rows_at_queue_time, validate_run_config
 from cashew_integration.importer.diagnostics import generate_diagnostics_csv
@@ -110,8 +111,10 @@ def _process(run_name: str) -> None:
         frappe.conf.get("cashew_progress_interval", 20)
     )
 
-    # Counters
-    posted = failed = skipped = 0
+    # Counters. `resynced` is a subset of `posted`, not a fourth outcome — a resynced
+    # row did post, it just replaced a stale document on the way. Reported separately
+    # because "the import rewrote submitted GL" deserves to be visible.
+    posted = failed = skipped = resynced = 0
 
     # Transfer pair state: row_idx -> row dict of the first-seen leg
     pending_transfer: dict[int, dict] = {}
@@ -175,7 +178,18 @@ def _process(run_name: str) -> None:
                 continue
         else:
             try:
-                doctype, docname = post_row(row, run)
+                if row.get("_resync_of"):
+                    # Source transaction was edited in Cashew after it posted:
+                    # replace the stale document instead of adding a second one.
+                    # Guards inside apply_resync mark the row on refusal.
+                    doctype, docname = apply_resync(row, run)
+                    if not doctype:
+                        _write_row_result(run, row)
+                        failed += 1
+                        continue
+                    resynced += 1
+                else:
+                    doctype, docname = post_row(row, run)
                 row["posted_doctype"]    = doctype
                 row["posted_docname"]    = docname
                 row["posted_gl_date"]    = row["txn_date"]
@@ -205,6 +219,23 @@ def _process(run_name: str) -> None:
 
     _update_counters(run, posted, failed, skipped)
 
+    if resynced:
+        # An import that rewrites already-submitted GL must leave a trail somewhere
+        # a person will actually look, not only on the individual rows.
+        frappe.log_error(
+            frappe.as_json([
+                {
+                    "row_idx":     r.get("row_idx"),
+                    "source_pk":   r.get("source_pk"),
+                    "superseded":  (r.get("_resync_of") or {}).get("posted_docname"),
+                    "replaced_by": r.get("posted_docname"),
+                    "amount":      r.get("raw_amount"),
+                }
+                for r in rows if r.get("revert_status") == RESYNCED
+            ], indent=2),
+            f"Cashew Import Resynced Edited Rows: {run.name}",
+        )
+
     # Diagnostics CSV (C008)
     try:
         diag_file = generate_diagnostics_csv(rows, run)
@@ -222,6 +253,7 @@ def _process(run_name: str) -> None:
         "rows_posted":  posted,
         "rows_failed":  failed,
         "rows_skipped": skipped,
+        "rows_resynced": resynced,
         "finished_on":  str(run.finished_on),
     })
 
@@ -381,6 +413,10 @@ def _write_row_result(run, row: dict) -> None:
             "posted_docname":          row.get("posted_docname"),
             "posted_gl_date":          row.get("posted_gl_date"),
             "is_duplicate":            row.get("is_duplicate", 0),
+            # Set by a resync — without these the row would look like an ordinary
+            # posting and the cancelled original would have no visible successor.
+            "revert_status":           row.get("revert_status"),
+            "revert_error":            row.get("revert_error"),
             "exchange_rate":           row.get("exchange_rate"),
             "base_amount":             row.get("base_amount"),
             "transfer_pair_row_idx":   row.get("transfer_pair_row_idx"),

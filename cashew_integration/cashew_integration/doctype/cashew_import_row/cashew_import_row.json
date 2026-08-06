@@ -8,6 +8,8 @@
  "field_order": [
   "row_idx",
   "source_hash",
+  "source_pk",
+  "source_modified",
   "raw_account",
   "txn_date",
   "month_key",
@@ -63,6 +65,23 @@
    "read_only": 1,
    "reqd": 1,
    "search_index": 1
+  },
+  {
+   "description": "Cashew transaction_pk. Stable across edits, unlike source_hash — the pair is what lets a re-import tell an edited transaction from a new one. NULL on every CSV-imported row: the CSV export carries no transaction id.",
+   "fieldname": "source_pk",
+   "fieldtype": "Data",
+   "label": "Source PK",
+   "no_copy": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Cashew date_time_modified for this transaction, in site-local time.",
+   "fieldname": "source_modified",
+   "fieldtype": "Datetime",
+   "label": "Source Modified",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "fieldname": "raw_account",
@@ -333,7 +352,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Revert Status",
-   "options": "\nReverted\nRevert-Failed\nCancelled Externally\nDeleted Externally",
+   "options": "\nReverted\nRevert-Failed\nCancelled Externally\nDeleted Externally\nResynced\nSuperseded",
    "read_only": 1
   },
   {

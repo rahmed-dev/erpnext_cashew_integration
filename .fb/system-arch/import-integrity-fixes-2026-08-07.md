@@ -132,10 +132,128 @@ the direction of the error both point at a deliberate cancel of a duplicate.
 Recommendation: leave it cancelled. The backfill now flags the row
 `Cancelled Externally` so it reads as a decision rather than an unnoticed hole.
 
-### Petty Cash: 1,324.00 PKR unexplained
+### Petty Cash: 1,324.00 PKR — resolved, and it was a real bug
 
-Cashew says 0.07 on 2026-07-30; ERPNext says -1,323.93. A gap of exactly 1,324.00,
-suspiciously round. Not chased yet — small, and unrelated to any fix above.
+Cashew says 0.07 on 2026-07-30; ERPNext says -1,323.93. A line-by-line diff of all 215
+importer-created Petty Cash entries against the SQLite export leaves exactly three
+unmatched lines, and Cashew's own timestamps explain them:
+
+| UTC | |
+|---|---|
+| 2026-06-29 15:43:08 | Loan to Customer HC created at **150,000.00**, imported as `ACC-JV-2026-00565` |
+| 2026-07-07 05:55:38 | Loan **edited down to 148,674.00** |
+| 2026-07-07 05:55:55 | 17 seconds later, the 1,326.00 difference entered as its own transaction |
+
+The loan was split. Cashew holds both halves; ERPNext imported the new 1,326.00 line
+(created inside a later window) but never revisited the edited loan, so it still carries
+150,000.00 and counts the 1,326.00 twice. With the PC Build's +2.00 — ERPNext has a
+13,748.00 Purchase Invoice where Cashew noted 13,750.00 — that is exactly -1,324.00.
+
+Two independent causes, both in `importer/sqlite_reader.py`:
+
+1. `_normalize_row` windowed on `date_created` only. An edit does not move
+   `date_created`, and `date_time_modified` was not even selected, so an edited older
+   transaction fell outside every later window and was never seen again.
+2. `_READER_SQL` read `transaction_pk` into `row["_txn_pk"]`, where the leading
+   underscore made `api._dict_to_child` drop it and no doctype field existed to hold
+   it. Idempotency therefore keyed on `source_hash` alone — and an edit *changes* the
+   hash, so an edited row read as brand new rather than as a revision.
+
+The same write-once root as the rest of f013. Fixed in c006 below.
+
+## c006 — resync of edited source transactions
+
+### `Cashew Import Row`
+
+`source_pk` (Cashew `transaction_pk`) and `source_modified`, both `read_only` +
+`no_copy`. `revert_status` gains `Resynced` and `Superseded`.
+
+`source_pk` is stable across edits where `source_hash` is not, and the pair gives the
+three-way answer the importer needed: unknown pk → new; known pk, same hash → duplicate,
+skip; known pk, different hash → edited upstream, resync.
+
+`source_pk` is deliberately **not** part of `parser._compute_hash`. The hash must
+describe content only — a pk inside it would make every row unique and break
+idempotency outright. `tests/test_sqlite_import.py`'s CSV/SQLite parity test pins this.
+
+### `importer/sqlite_reader.py`
+
+The window now admits a row whose created date **or** modified date falls inside it.
+`txn_date` still comes from `date_created`, so a row kept only because it was edited
+in-window still posts under its real transaction date.
+
+`date_time_modified` is selected only when the backup's schema has the column
+(`_reader_sql` checks `PRAGMA table_info`). Naming it unconditionally made sqlite raise
+`OperationalError` on any older export, which the reader reported as "not a readable
+Cashew SQLite backup" — a total import failure traded for an optional field. Caught by
+the existing suite, which uses fixtures without the column.
+
+### `importer/resync.py` — new
+
+`mark_changed_rows` tags edited rows; `apply_resync` posts the replacement, then
+cancels the stale document under `frappe.flags.cashew_reverting` so
+`reconcile.on_document_cancelled` does not call the app's own cancel external. The old
+row is stamped `Superseded`, the new one `Resynced`, each naming the other.
+
+The user chose correction-during-import over flag-and-wait, so a routine import can now
+rewrite submitted GL. That makes the guards the load-bearing part:
+
+- **post before cancel.** Cancelling first and failing to repost would leave the period
+  with neither entry — worse than the stale figure being corrected.
+- **closed period** (disabled Fiscal Year or a Period Closing Voucher on/after the date)
+  → `RESYNC_PERIOD_CLOSED`, nothing written.
+- **repost fails** → `RESYNC_REPOST_FAILED`, original left submitted and untouched.
+- prior document already cancelled or deleted → post as new, no second cancel.
+
+Every guard errors the row rather than raising, so one bad row cannot abort a run. Each
+resync is logged per run (`Cashew Import Resynced Edited Rows`) — an import that
+rewrites submitted GL needs a trail somewhere a person will actually look.
+
+### `importer/idempotency.py`
+
+Change detection runs *before* the hash check, and a tagged row is exempt from the skip
+— its new hash is genuinely absent from the ledger.
+
+Also removed a dead line: `all_hashes = {r["raw_amount"] for r in rows}` was never used,
+its comment claimed it held hashes, and it raised `KeyError` on any row without
+`raw_amount`. A test fixture found it.
+
+### SPA
+
+- `StatusPill`'s `row-revert` table only knew `Reverted` and `Revert-Failed`, so the
+  f013 c001 external states already rendered unstyled; it now carries all six.
+- `RowsTable.vue` hand-rolled its own revert pill keyed on `Failed` and `Pending` —
+  values this field cannot hold. Replaced with the shared pill.
+- `InlineRowDrawer.vue` shows a notice explaining a cancelled-and-replaced document
+  rather than leaving it to be pieced together from a status column and a field dump.
+
+### Not backfilled
+
+`source_pk` cannot be derived for rows already imported: CSV carries no transaction id
+and the SQLite path discarded it. Existing rows keep `source_pk = NULL` and take the
+unchanged hash-only path. **Detection starts with the next import; the existing history
+is not protected.** Confirmed with the user, who will take care upstream instead.
+
+### `scripts/correct_stale_loan_je.py`
+
+The one known stale entry, corrected by hand. Identified by content, not name — it is
+`ACC-JV-2026-00565` on live and was `ACC-JV-2026-00375` on work.local — and it refuses
+to write unless exactly one row matches. Dry run by default, like the FX repost.
+
+Expected: Petty Cash -1,323.93 → **+2.07**, Customer HC's receivable down 1,326.00. The
+2.00 residual against Cashew's 0.07 is the PC Build invoice-versus-note difference and
+is left alone.
+
+### work.local cannot rehearse this
+
+Correcting an earlier claim in this document: work.local is not merely behind, it is
+**gutted** — 73 Journal Entries and 3 Cashew Import Rows, with both 150,000.00 Petty
+Cash GL entries already cancelled. The earlier "165 Petty Cash entries" count included
+cancelled ones. The dry run there correctly reports nothing to correct.
+
+A fresh `erp.nstack.xyz` backup is therefore a hard prerequisite for Part A, not a nicety.
+Until one exists, `correct_stale_loan_je` has been exercised only under mocks
+(`tests/test_resync.py::TestStaleLoanMatcher`).
 
 ## Verification
 
@@ -220,6 +338,15 @@ Both predate this work and neither is touched by any fix here.
 
 ## Deploying to erp.nstack.xyz
 
-Not done. `bench update --pull --apps cashew_integration`, then `bench --site
-erp.nstack.xyz migrate` runs the three backfill patches, then create the Currency
-Exchange record above, then the repost script.
+Not done. In this order:
+
+1. push, then `bench update --pull --apps cashew_integration`
+2. `bench --site erp.nstack.xyz migrate` — runs the three backfill patches and adds
+   `source_pk` / `source_modified`
+3. create `Currency Exchange` 2026-05-14 USD→PKR **278.60766133** (see the blocker above)
+4. `repost_same_currency_transfers` — dry run, then apply
+5. **take a backup and restore it to work.local**, rehearse step 6 there first
+6. `correct_stale_loan_je` — dry run must report exactly one entry, then apply
+7. `bench build --app cashew_integration` for the SPA pill changes
+
+Steps 4 and 6 both write GL and are independent of each other.

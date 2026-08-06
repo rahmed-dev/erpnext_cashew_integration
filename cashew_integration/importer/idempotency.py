@@ -15,6 +15,7 @@ If the source leg is a duplicate, both legs are marked Skipped.
 import frappe
 
 from cashew_integration.importer.errors import prefix_with_row_idx
+from cashew_integration.importer.resync import mark_changed_rows
 
 
 # ── public entry point ─────────────────────────────────────────────────────────
@@ -28,11 +29,17 @@ def apply_idempotency_guard(rows: list[dict], run) -> None:
     company   = run.company
     run_name  = run.name
 
+    # Tag edited-upstream rows FIRST. A Cashew edit changes source_hash, so an edited
+    # transaction would otherwise sail past the hash check as if it were new, and its
+    # stale original would stay submitted — the ledger would then hold both figures.
+    # Rows tagged here carry `_resync_of` and must not be skipped below: the hash they
+    # now carry is genuinely absent from the ledger.
+    mark_changed_rows(rows, run)
+
     # Build lookup: source_hash -> (posted_doctype, posted_docname)
     # from existing Cashew Import Row records in other (completed) runs
     existing = _fetch_posted_hashes(company, run_name)
     # Augment with secondary check on the ERP documents themselves
-    all_hashes = {r["raw_amount"] for r in rows}  # quick set of our hashes for filtering
     si_pi_je_dupes = _fetch_erp_document_hashes(rows)
     existing.update(si_pi_je_dupes)
 
@@ -41,6 +48,8 @@ def apply_idempotency_guard(rows: list[dict], run) -> None:
     for row in rows:
         if row.get("validation_status") in ("Error", "Skipped"):
             continue
+        if row.get("_resync_of"):
+            continue  # edited upstream — resync replaces the original, never a skip
 
         h = row.get("source_hash")
         if h and h in existing:

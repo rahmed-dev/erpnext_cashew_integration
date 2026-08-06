@@ -15,6 +15,33 @@ const visibleFields = computed(() => {
     .filter(([k]) => !k.startsWith('_') && typeof props.row[k] !== 'function')
     .map(([k, v]) => ({ k, v }));
 });
+
+const LEDGER_NOTICES = {
+  Resynced: {
+    title: 'Source edited in Cashew — this row replaced an earlier posting',
+    cls: 'bg-sky-50 border-sky-200 text-sky-900',
+  },
+  Superseded: {
+    title: 'Superseded — this row’s document was cancelled and replaced',
+    cls: 'bg-gray-50 border-gray-200 text-gray-700',
+  },
+  'Cancelled Externally': {
+    title: 'Cancelled outside the import — the GL impact is gone',
+    cls: 'bg-red-50 border-red-200 text-red-900',
+  },
+  'Deleted Externally': {
+    title: 'Deleted outside the import — the posted document no longer exists',
+    cls: 'bg-red-50 border-red-200 text-red-900',
+  },
+  'Revert-Failed': {
+    title: 'Revert failed — the document may still be submitted',
+    cls: 'bg-red-50 border-red-200 text-red-900',
+  },
+};
+
+const ledgerNotice = computed(
+  () => (props.row && LEDGER_NOTICES[props.row.revert_status]) || null,
+);
 </script>
 
 <template>
@@ -32,6 +59,17 @@ const visibleFields = computed(() => {
           <div class="flex items-center gap-2 text-xs">
             <button :class="['px-2 py-1 rounded', !showJson ? 'bg-gray-100 font-medium' : 'hover:bg-gray-50']" @click="showJson = false">Fields</button>
             <button :class="['px-2 py-1 rounded', showJson ? 'bg-gray-100 font-medium' : 'hover:bg-gray-50']" @click="showJson = true">JSON</button>
+          </div>
+
+          <!-- A resync cancels a submitted document and posts a replacement. That is
+               the one thing in this drawer a person must not have to piece together
+               from a status column and a raw field dump. -->
+          <div
+            v-if="ledgerNotice"
+            :class="['rounded-lg border p-2.5 text-xs leading-relaxed', ledgerNotice.cls]"
+          >
+            <p class="font-medium">{{ ledgerNotice.title }}</p>
+            <p class="mt-0.5">{{ row.revert_error }}</p>
           </div>
 
           <pre v-if="showJson" class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ JSON.stringify(row, null, 2) }}</pre>

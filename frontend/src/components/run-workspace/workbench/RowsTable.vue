@@ -164,12 +164,14 @@ function onHeaderSelectAll() {
             </template>
             <template v-else-if="header(cid).renderer === 'revert-pill'">
               <span v-if="!row.revert_status" class="text-gray-400">—</span>
-              <span v-else :class="[
-                'inline-flex items-center px-1.5 py-0.5 rounded text-xs',
-                row.revert_status === 'Reverted' && 'bg-amber-50 text-amber-800',
-                row.revert_status === 'Failed' && 'bg-red-50 text-red-800',
-                row.revert_status === 'Pending' && 'bg-gray-100 text-gray-700',
-              ]" :title="row.revert_error">{{ row.revert_status }}</span>
+              <!-- Shared pill, not a local class map: the local one keyed off
+                   'Failed' and 'Pending', which are not values this field can hold
+                   (the doctype has Reverted / Revert-Failed / Cancelled Externally /
+                   Deleted Externally / Resynced / Superseded), so every real state
+                   but 'Reverted' rendered unstyled. -->
+              <span v-else :title="row.revert_error">
+                <StatusPill kind="row-revert" :value="row.revert_status" />
+              </span>
             </template>
             <template v-else-if="header(cid).renderer === 'row-kebab'">
               <div class="flex items-center justify-end gap-1">

@@ -115,8 +115,69 @@ reconciliation_vs_cashew: >
   Elevate Pay 0.00 USD vs -1,238.85 PKR is the c002 FX defect; Petty Cash 0.07 vs
   -1,323.93 leaves a gap of exactly 1,324.00 PKR, unexplained.
 
+resolved:
+  - >
+    Petty Cash 1,324.00 gap RESOLVED 2026-08-07 and it was a real bug. A loan to
+    Customer HC was created 2026-06-29 at 150,000.00 and imported, then edited in Cashew
+    on 2026-07-07 05:55:38 UTC down to 148,674.00, with the 1,326.00 difference entered
+    17 seconds later as its own transaction. ERPNext imported the new line but never
+    revisited the edited loan, counting the 1,326.00 twice. With the PC Build's +2.00
+    (13,748.00 Purchase Invoice vs Cashew's 13,750.00 note) that is exactly -1,324.00.
+    Two causes, both in sqlite_reader: the window tested date_created only, and
+    transaction_pk was read into a private key and discarded so idempotency keyed on
+    source_hash alone — which an edit changes. See c006.
+
+components:
+  - id: c006
+    name: Resync of edited source transactions
+    stage: done
+    date: 2026-08-07
+    summary: >
+      Cashew Import Row gains source_pk + source_modified (read_only, no_copy) and
+      revert_status gains Resynced / Superseded. sqlite_reader windows on created OR
+      modified and selects date_time_modified only when the schema has it (naming it
+      unconditionally broke every older backup with "not a readable Cashew SQLite
+      backup" — caught by the existing suite). New importer/resync.py detects a known
+      source_pk carrying a different source_hash and, per the user's choice of
+      correction-during-import over flag-and-wait, posts the replacement BEFORE
+      cancelling the stale document, under frappe.flags.cashew_reverting. Guards refuse
+      on a closed period (RESYNC_PERIOD_CLOSED) or a failed repost
+      (RESYNC_REPOST_FAILED), always leaving the original submitted rather than the
+      period empty; each errors the row instead of raising. Idempotency runs detection
+      before the hash check and exempts tagged rows; a dead line building an unused set
+      from raw_amount was removed. SPA: StatusPill's row-revert table carried only two
+      of six states, RowsTable hand-rolled a pill keyed on values the field cannot hold,
+      and InlineRowDrawer now explains a cancelled-and-replaced document.
+      NOT backfilled — source_pk cannot be derived for existing rows, so detection
+      starts with the next import and the existing history is unprotected (user's call).
+    verification: >
+      Test runner still cannot start (DocType Department Approver not found, pre-existing
+      and identical on untouched modules), so tests were executed through bench console:
+      test_resync 18/18, test_sqlite_import 9/9 (the CSV/SQLite hash-parity test is what
+      proves the reader change left the hash alone), test_parser 22/22, test_integrity
+      7/7. test_mapping's 11 failures + 3 errors were baselined against a clean stash and
+      are identical, i.e. pre-existing. bench migrate clean, yarn build clean. Verified
+      against the real export: a July window now returns the loan created 2026-06-29 and
+      modified 2026-07-07, with txn_date still 2026-06-29.
+
+  - id: c007
+    name: Correct the one stale loan entry
+    stage: ready-to-apply
+    date: 2026-08-07
+    summary: >
+      scripts/correct_stale_loan_je.py. Identified by content, not name (ACC-JV-2026-00565
+      on live, ACC-JV-2026-00375 on work.local), refuses to write unless exactly one row
+      matches, dry run by default. Expected: Petty Cash -1,323.93 -> +2.07 and Customer
+      HC's receivable down 1,326.00; the 2.00 residual is the PC Build invoice-vs-note
+      difference and stays.
+
 open:
-  - Petty Cash: 1,324.00 PKR gap vs Cashew, cause not identified.
+  - >
+    c007 NOT applied. work.local cannot rehearse it — the site is gutted (73 Journal
+    Entries, 3 Cashew Import Rows, both 150,000.00 Petty Cash GL entries already
+    cancelled; an earlier "165 Petty Cash entries" count in this record wrongly included
+    cancelled rows). A fresh erp.nstack.xyz backup is a hard prerequisite. Until then the
+    script is exercised only under mocks.
   - ACC-JV-2026-00042 recommended to stay cancelled — restoring it moves ERPNext AWAY
     from Cashew. Now flagged Cancelled Externally so it reads as a decision.
   - Not deployed to erp.nstack.xyz.

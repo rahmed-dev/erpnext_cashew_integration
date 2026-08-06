@@ -41,9 +41,15 @@ from cashew_integration.importer.errors import set_row_validation_error
 # ── reader query — LEFT JOIN mandatory (INNER would silently drop rows whose ────
 # wallet/category was deleted, re-creating the exact omission bug this fixes),
 # WHERE paid=1 is the balance-scope filter, deterministic order for stable row_idx.
+#
+# `date_time_modified` is selected only when the backup's schema has it. Naming it
+# unconditionally makes sqlite raise OperationalError on any older export, which the
+# reader reports as "not a readable Cashew SQLite backup" — a wholesale import failure
+# in exchange for an optional field. Absent, it reads NULL and _local_modified falls
+# back to the created datetime, which is the pre-existing behaviour exactly.
 _READER_SQL = """
 SELECT t.transaction_pk, t.name, t.amount, t.note, t.income, t.date_created,
-       t.paired_transaction_fk,
+       {modified_expr} AS date_time_modified, t.paired_transaction_fk,
        w.name AS account, w.currency,
        c.name AS category, sc.name AS sub_category
 FROM transactions t
@@ -53,6 +59,15 @@ LEFT JOIN categories sc ON t.sub_category_fk = sc.category_pk
 WHERE t.paid = 1
 ORDER BY t.date_created, t.transaction_pk;
 """
+
+
+def _reader_sql(conn: sqlite3.Connection) -> str:
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(transactions)")}
+    return _READER_SQL.format(
+        modified_expr=(
+            "t.date_time_modified" if "date_time_modified" in columns else "NULL"
+        )
+    )
 
 _DEFAULT_TZ = "Asia/Karachi"
 
@@ -124,7 +139,7 @@ def _fetch_rows(file_content: bytes) -> list[sqlite3.Row]:
         conn = sqlite3.connect(f"file:{tmp.name}?mode=ro", uri=True)
         try:
             conn.row_factory = sqlite3.Row
-            return conn.execute(_READER_SQL).fetchall()
+            return conn.execute(_reader_sql(conn)).fetchall()
         except sqlite3.DatabaseError:
             frappe.throw(
                 "The attached file is not a readable Cashew SQLite backup. "
@@ -143,6 +158,25 @@ def _fetch_rows(file_content: bytes) -> list[sqlite3.Row]:
 
 # ── per-row normalization (parity-critical) ────────────────────────────────────
 
+def _local_modified(raw: sqlite3.Row, tz, created_dt: datetime) -> datetime:
+    """Site-local ``date_time_modified``, falling back to the created datetime.
+
+    Cashew leaves the column NULL on transactions that were never edited, and older
+    backups predate it entirely. Falling back to created keeps an unedited row's
+    window behaviour byte-identical to before this field existed.
+    """
+    try:
+        raw_modified = raw["date_time_modified"]
+    except (IndexError, KeyError):
+        return created_dt
+    if raw_modified in (None, ""):
+        return created_dt
+    try:
+        return datetime.fromtimestamp(int(raw_modified), tz=timezone.utc).astimezone(tz)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return created_dt
+
+
 def _normalize_row(
     raw: sqlite3.Row, company_currency: str, tz, lo: str | None, hi: str | None
 ) -> dict | None:
@@ -152,11 +186,23 @@ def _normalize_row(
     # epoch (UTC seconds) → site-local datetime  ⚠ #1 parity trap
     local_dt = datetime.fromtimestamp(int(raw["date_created"]), tz=timezone.utc).astimezone(tz)
     local_date = local_dt.date()
+    modified_dt = _local_modified(raw, tz, local_dt)
 
     # date-window filter on the SITE-LOCAL date (never an epoch-range SQL compare —
     # that risks an off-by-one at the tz boundary); ISO date strings sort correctly.
+    #
+    # The window is tested against the created date OR the modified date. Created
+    # alone hides every EDIT to an older transaction: the edit does not move
+    # date_created, so the row falls outside every window after the one that first
+    # imported it and ERPNext keeps the pre-edit figure forever. That is exactly how
+    # a loan edited from 150,000.00 down to 148,674.00 stayed at 150,000.00 in the
+    # ledger. A row kept only because it was modified in-window still posts under its
+    # real transaction date — see txn_date below, which stays on local_date.
     iso = local_date.isoformat()
-    if (lo and iso < lo) or (hi and iso > hi):
+    iso_modified = modified_dt.date().isoformat()
+    if lo and iso < lo and iso_modified < lo:
+        return None
+    if hi and iso > hi and iso_modified > hi:
         return None
 
     account = raw["account"]
@@ -182,6 +228,13 @@ def _normalize_row(
         # carried for the FK pairing pass; not persisted to the child (leading _)
         "_paired_fk": raw["paired_transaction_fk"] or None,
         "_txn_pk": raw["transaction_pk"],
+        # Persisted (no leading underscore, so api._dict_to_child copies them).
+        # source_pk is stable across edits where source_hash is not; the pair is what
+        # lets a re-import recognise an edited transaction instead of treating it as
+        # new. Deliberately NOT part of _compute_hash — the hash must describe content
+        # only, or a pk would make every row look unique and idempotency would break.
+        "source_pk": raw["transaction_pk"],
+        "source_modified": modified_dt.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
     amount_float = float(raw["amount"])
