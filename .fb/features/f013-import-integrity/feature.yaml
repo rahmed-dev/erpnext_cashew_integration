@@ -171,6 +171,46 @@ components:
       HC's receivable down 1,326.00; the 2.00 residual is the PC Build invoice-vs-note
       difference and stays.
 
+  - id: c008
+    name: Resync lifecycle hardening (coherence review of c006)
+    stage: done
+    date: 2026-08-07
+    summary: >
+      A coherence review of c006 found six defects, two of which broke the ledger, and
+      both traced to one mistake: resync was bolted on as a branch of the worker's
+      transaction-type switch. worker._process tested txn_type == "Transfer" BEFORE
+      _resync_of, so an edited transfer leg never reached the resync branch — it posted
+      a second JV and left the stale one submitted, reintroducing the exact double-count
+      c006 exists to prevent. Second, widening the reader to created-OR-modified made it
+      return transactions dated before the window that were merely edited inside it; one
+      with no prior posting was posted as NEW, so an August import could silently write
+      November entries. Fix: resync gets its own lifecycle OUTSIDE the type switch —
+      screen_resyncs() before the loop, the loop unchanged and unaware, then
+      apply_supersessions() after everything has posted. Transfers, external transfers,
+      loans and invoices all get the behaviour for free, and nothing is cancelled until
+      the replacement provably exists. mark_changed_rows now propagates a tag across a
+      transfer pair (editing one leg alone would otherwise strand the other as
+      TRANSFER_PAIR_INCOMPLETE). The reader emits _window_reason and idempotency skips a
+      modified-only row that has no prior posting, enforcing "a window may only create
+      entries dated inside it". Supersession is recorded as data — new superseded_by /
+      supersedes fields — so reconcile can VERIFY the successor is live instead of
+      trusting a status string; a cancelled document whose replacement is also gone is
+      reported as supersession-broken. Also: rows_resynced is now a real counter field
+      (was emitted to the SPA and stored nowhere), _write_row_result no longer blanks
+      revert_status it does not own, diagnostics gains revert_status + supersedes, and a
+      failed cancel after a successful repost is stamped Supersede-Failed, counted
+      failed, and fails the run — c006 let that exception unwind into the generic row
+      handler with the replacement already posted and unrecorded.
+    verification: >
+      Executed through a frappe.init/connect harness with unittest.TextTestRunner (the
+      bench runner still cannot start: DocType Department Approver not found, an HRMS
+      leftover): test_resync 33/33, test_sqlite_import 9/9 (hash parity intact),
+      test_parser 22/22, test_integrity 7/7 — 71/71. test_mapping 29 ran / 11 failed /
+      3 errors and test_integration's setUpClass LinkValidationError ("Default Account:
+      Service - CS") were both baselined against a clean git stash and are identical,
+      i.e. pre-existing site-fixture damage on work.local. bench migrate clean, yarn
+      build clean.
+
 open:
   - >
     c007 NOT applied. work.local cannot rehearse it — the site is gutted (73 Journal

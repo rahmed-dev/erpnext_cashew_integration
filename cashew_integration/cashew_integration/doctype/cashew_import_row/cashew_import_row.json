@@ -48,7 +48,9 @@
   "posted_gl_date",
   "is_duplicate",
   "revert_status",
-  "revert_error"
+  "revert_error",
+  "superseded_by",
+  "supersedes"
  ],
  "fields": [
   {
@@ -352,13 +354,29 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Revert Status",
-   "options": "\nReverted\nRevert-Failed\nCancelled Externally\nDeleted Externally\nResynced\nSuperseded",
+   "options": "\nReverted\nRevert-Failed\nCancelled Externally\nDeleted Externally\nResynced\nSuperseded\nSupersede-Failed",
    "read_only": 1
   },
   {
    "fieldname": "revert_error",
    "fieldtype": "Small Text",
    "label": "Revert Error",
+   "read_only": 1
+  },
+  {
+   "description": "The document that replaced this row's posted document after the source transaction was edited in Cashew. Stored as a name, not inferred, so reconciliation can verify the replacement is actually live — a cancelled document whose successor has itself gone is real drift, not a supersession.",
+   "fieldname": "superseded_by",
+   "fieldtype": "Data",
+   "label": "Superseded By",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "The document this row's posting replaced.",
+   "fieldname": "supersedes",
+   "fieldtype": "Data",
+   "label": "Supersedes",
+   "no_copy": 1,
    "read_only": 1
   }
  ],

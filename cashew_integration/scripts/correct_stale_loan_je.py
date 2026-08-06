@@ -160,6 +160,9 @@ def _correct(case: dict) -> None:
         "posted_doctype": doctype,
         "posted_docname": docname,
         "revert_status":  RESYNCED,
+        # Same lineage field the importer's own resync writes, so this hand-applied
+        # correction reads identically to an automatic one in the row explorer.
+        "supersedes":     case["journal_entry"],
         "revert_error": (
             f"Source transaction was edited in Cashew on 2026-07-07 from "
             f"{_STALE_AMOUNT:,.2f} to {_CORRECT_AMOUNT:,.2f}. "

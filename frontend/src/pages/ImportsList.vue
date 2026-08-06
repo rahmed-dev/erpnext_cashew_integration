@@ -76,7 +76,7 @@ const runsResource = createResource({
       'name', 'status', 'source_type', 'company',
       'period_start', 'period_end',
       'rows_total', 'rows_valid', 'rows_failed', 'rows_posted', 'rows_skipped',
-      'modified', 'diagnostics_file',
+      'rows_resynced', 'modified', 'diagnostics_file',
     ],
     filters: buildFilterArray(),
     order_by: `${state.sort.column} ${state.sort.dir}`,

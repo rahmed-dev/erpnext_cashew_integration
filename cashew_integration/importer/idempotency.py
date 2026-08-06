@@ -51,6 +51,15 @@ def apply_idempotency_guard(rows: list[dict], run) -> None:
         if row.get("_resync_of"):
             continue  # edited upstream — resync replaces the original, never a skip
 
+        # An import window may only CREATE entries dated inside it. The SQLite reader
+        # also returns transactions dated before the window that were edited inside
+        # it, so that an edit to an older posting can be found — but one with no prior
+        # posting is not a revision of anything, and posting it would backdate a new
+        # entry into a period the operator did not ask to import.
+        if row.get("_window_reason") == "modified":
+            _mark_out_of_window(row)
+            continue
+
         h = row.get("source_hash")
         if h and h in existing:
             posted_dt, posted_dn = existing[h]
@@ -130,6 +139,17 @@ def _fetch_erp_document_hashes(rows: list[dict]) -> dict[str, tuple[str, str]]:
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
+def _mark_out_of_window(row: dict) -> None:
+    """Skipped, not Errored — the row is out of scope, not broken."""
+    row["validation_status"] = "Skipped"
+    row["validation_error_message"] = prefix_with_row_idx(
+        row,
+        f"Edited in Cashew on {row.get('source_modified') or 'a later date'}, but the "
+        f"transaction itself is dated {row.get('txn_date')} — before this import "
+        "window, and it was never imported. Widen the window to import it.",
+    )
+
 
 def _mark_skipped(row: dict, posted_doctype: str, posted_docname: str) -> None:
     row["validation_status"]        = "Skipped"

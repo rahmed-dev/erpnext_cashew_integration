@@ -38,6 +38,9 @@ const TABLES = {
     'Deleted Externally':   { label: 'Deleted Outside',   cls: 'bg-red-100 text-red-800' },
     Resynced:               { label: 'Resynced',       cls: 'bg-sky-100 text-sky-800' },
     Superseded:             { label: 'Superseded',     cls: 'bg-gray-200 text-gray-600' },
+    // Red: the replacement posted but the original could not be cancelled, so the
+    // transaction is in the ledger twice. Louder than any other revert state.
+    'Supersede-Failed':     { label: 'Supersede Failed', cls: 'bg-red-100 text-red-800' },
   },
   'txn-type': {
     Income:              { label: 'Income',             cls: 'bg-green-50 text-green-700' },

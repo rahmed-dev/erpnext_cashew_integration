@@ -255,6 +255,61 @@ A fresh `erp.nstack.xyz` backup is therefore a hard prerequisite for Part A, not
 Until one exists, `correct_stale_loan_je` has been exercised only under mocks
 (`tests/test_resync.py::TestStaleLoanMatcher`).
 
+## c008 — coherence review of c006, and what it found
+
+A read-through of `be5dd4a` before deploying it found six defects. Two broke the
+ledger, and both came from one mistake: **resync was bolted on as a branch of the
+worker's transaction-type switch rather than made a property of the import.**
+
+| # | Defect | Consequence |
+|---|--------|-------------|
+| 1 | `worker._process` tested `txn_type == "Transfer"` before `_resync_of` | An edited transfer leg never reached the resync branch: it posted a second JV and left the stale one submitted — the exact double-count c006 exists to prevent |
+| 2 | Reader window widened to created-OR-modified with no gate | A transaction dated before the window but edited inside it, with no prior posting, was posted as NEW — an August import could write November entries |
+| 3 | `reconcile_run` reported every `docstatus == 2` as drift | Every run that ever resynced was permanently unclean, drowning the real signal |
+| 4 | `apply_resync`'s two "post as new" fallbacks returned a truthy doctype | The worker counted a resync that never happened, and the audit log — filtered on `revert_status` — disagreed with the counter |
+| 5 | `_write_row_result` wrote `revert_status` unconditionally | Re-queueing a Failed run erased any `Cancelled Externally` stamp reconcile had made |
+| 6 | `rows_resynced` emitted to the SPA, stored nowhere | The count vanished on reload |
+
+There was also a silent hole in c006 worth recording: the `.cancel()` sat outside any
+`try`, so an exception unwound into the worker's generic row handler, which marked the
+row Error **after** the replacement had already posted and without recording its name.
+
+**The fix.** Resync gets its own lifecycle, deliberately outside the type switch:
+
+```
+validate → idempotency (tags _resync_of)
+         → screen_resyncs()      refuse what cannot be replaced, before any write
+         → the ordinary post loop, which knows nothing about resync
+         → apply_supersessions()  cancel what was replaced, once everything has posted
+```
+
+Consequences worth stating: transfers, external transfers, loans and invoices all get
+the behaviour for free; nothing is cancelled until the replacement provably exists; and
+a closed period is refused while refusing is still free, rather than discovered after
+the corrected figure is already in the ledger.
+
+Supporting changes:
+
+- `mark_changed_rows` propagates a tag across a transfer pair. Editing one leg's amount
+  leaves the other leg's hash unchanged, so it would be skipped as a duplicate and the
+  tagged leg stranded as `TRANSFER_PAIR_INCOMPLETE`. The pair is replaced as a unit.
+- The reader emits `_window_reason` (`"created"` / `"modified"`), and idempotency Skips
+  — not Errors, it is out of scope rather than broken — a modified-only row with no
+  prior posting. This is the invariant the window change broke: *an import window may
+  only create entries dated inside it.*
+- Supersession is stored as **data**, not a status string: `superseded_by` and
+  `supersedes` on `Cashew Import Row`. Reconcile verifies the successor is live; a
+  cancelled document whose replacement has itself gone is reported as
+  `supersession-broken`, which no status-string check could distinguish.
+- A failed cancel after a successful repost is stamped `Supersede-Failed`, counted
+  failed, and fails the run. It is the one outcome that leaves two live documents for
+  one transaction and must never pass quietly.
+
+Tests: `test_resync` 33/33, `test_sqlite_import` 9/9 (hash parity intact), `test_parser`
+22/22, `test_integrity` 7/7. `test_mapping` (29/11/3) and `test_integration`'s setUpClass
+`LinkValidationError` were baselined against a clean `git stash` and are identical —
+pre-existing `work.local` fixture damage, not regressions.
+
 ## Verification
 
 The `work.local` test runner cannot start — `DocType Department Approver not

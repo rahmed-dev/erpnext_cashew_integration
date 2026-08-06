@@ -29,7 +29,7 @@ from frappe.utils import now
 from cashew_integration.importer.errors import set_row_validation_error
 from cashew_integration.importer.idempotency import apply_idempotency_guard
 from cashew_integration.importer.posting import post_row, post_transfer_pair
-from cashew_integration.importer.resync import RESYNCED, apply_resync
+from cashew_integration.importer.resync import apply_supersessions, screen_resyncs
 from cashew_integration.importer.realtime import emit_row_update, emit_run_progress
 from cashew_integration.importer.validation import validate_rows_at_queue_time, validate_run_config
 from cashew_integration.importer.diagnostics import generate_diagnostics_csv
@@ -42,6 +42,7 @@ _ROW_PATCH_FIELDS = (
     "transfer_pair_row_idx", "resolved_party", "resolved_party_type",
     "party_source", "resolved_route", "resolved_account",
     "resolved_external_account", "revert_status", "revert_error",
+    "supersedes", "superseded_by",
 )
 
 
@@ -104,8 +105,13 @@ def _process(run_name: str) -> None:
     validate_run_config(run, rows)
     validate_rows_at_queue_time(rows)
 
-    # Idempotency guard
+    # Idempotency guard (also tags rows whose source was edited upstream)
     apply_idempotency_guard(rows, run)
+
+    # Resync pre-flight. Runs BEFORE the posting loop so a row that cannot legally
+    # supersede its predecessor is refused while refusing is still free — once the
+    # replacement is posted, declining to cancel the original means two live entries.
+    screen_resyncs(rows, run)
 
     progress_interval = int(
         frappe.conf.get("cashew_progress_interval", 20)
@@ -121,7 +127,7 @@ def _process(run_name: str) -> None:
 
     for i, row in enumerate(rows):
         if _is_run_cancelled(run_name):
-            _update_counters(run, posted, failed, skipped)
+            _update_counters(run, posted, failed, skipped, resynced)
             run.db_set("finished_on", now(), notify=True)
             frappe.db.commit()
             emit_run_progress(run_name, {"status": "Cancelled", "finished_on": str(run.finished_on)})
@@ -178,18 +184,10 @@ def _process(run_name: str) -> None:
                 continue
         else:
             try:
-                if row.get("_resync_of"):
-                    # Source transaction was edited in Cashew after it posted:
-                    # replace the stale document instead of adding a second one.
-                    # Guards inside apply_resync mark the row on refusal.
-                    doctype, docname = apply_resync(row, run)
-                    if not doctype:
-                        _write_row_result(run, row)
-                        failed += 1
-                        continue
-                    resynced += 1
-                else:
-                    doctype, docname = post_row(row, run)
+                # Deliberately unaware of resync: superseding is a property of the
+                # run, applied uniformly after this loop, not a fourth posting route
+                # only non-Transfer rows would reach.
+                doctype, docname = post_row(row, run)
                 row["posted_doctype"]    = doctype
                 row["posted_docname"]    = docname
                 row["posted_gl_date"]    = row["txn_date"]
@@ -205,7 +203,7 @@ def _process(run_name: str) -> None:
 
         # Flush progress periodically
         if (i + 1) % progress_interval == 0:
-            _update_counters(run, posted, failed, skipped)
+            _update_counters(run, posted, failed, skipped, resynced)
             frappe.db.commit()
 
     # Any remaining unmatched Transfer legs: mark as errors
@@ -217,9 +215,18 @@ def _process(run_name: str) -> None:
         _write_row_result(run, row)
         failed += 1
 
-    _update_counters(run, posted, failed, skipped)
+    # Everything that was going to post has posted. Only now cancel the documents
+    # those postings replaced — the replacement provably exists, so the period is
+    # never left with neither entry.
+    resynced, supersede_failed = apply_supersessions(rows, run)
+    failed += supersede_failed
 
-    if resynced:
+    if resynced or supersede_failed:
+        # Rows are re-written because apply_supersessions stamps revert_status,
+        # supersedes and superseded_by after the loop already persisted them.
+        for row in rows:
+            if row.get("revert_status"):
+                _write_row_result(run, row)
         # An import that rewrites already-submitted GL must leave a trail somewhere
         # a person will actually look, not only on the individual rows.
         frappe.log_error(
@@ -230,11 +237,14 @@ def _process(run_name: str) -> None:
                     "superseded":  (r.get("_resync_of") or {}).get("posted_docname"),
                     "replaced_by": r.get("posted_docname"),
                     "amount":      r.get("raw_amount"),
+                    "outcome":     r.get("revert_status"),
                 }
-                for r in rows if r.get("revert_status") == RESYNCED
+                for r in rows if r.get("_resync_of")
             ], indent=2),
             f"Cashew Import Resynced Edited Rows: {run.name}",
         )
+
+    _update_counters(run, posted, failed, skipped, resynced)
 
     # Diagnostics CSV (C008)
     try:
@@ -402,10 +412,7 @@ def _write_row_result(run, row: dict) -> None:
     Emits a synthetic parent-run `doc_update` carrying the row patch
     so the SPA (c008) can apply per-row updates without polling.
     """
-    frappe.db.set_value(
-        "Cashew Import Row",
-        {"parent": run.name, "row_idx": row["row_idx"]},
-        {
+    patch = {
             "validation_status":       row.get("validation_status"),
             "validation_error_code":   row.get("validation_error_code"),
             "validation_error_message": row.get("validation_error_message"),
@@ -413,10 +420,6 @@ def _write_row_result(run, row: dict) -> None:
             "posted_docname":          row.get("posted_docname"),
             "posted_gl_date":          row.get("posted_gl_date"),
             "is_duplicate":            row.get("is_duplicate", 0),
-            # Set by a resync — without these the row would look like an ordinary
-            # posting and the cancelled original would have no visible successor.
-            "revert_status":           row.get("revert_status"),
-            "revert_error":            row.get("revert_error"),
             "exchange_rate":           row.get("exchange_rate"),
             "base_amount":             row.get("base_amount"),
             "transfer_pair_row_idx":   row.get("transfer_pair_row_idx"),
@@ -429,7 +432,21 @@ def _write_row_result(run, row: dict) -> None:
             "resolved_expense_account": row.get("resolved_expense_account"),
             "resolved_erp_account":    row.get("resolved_erp_account"),
             "resolved_external_account": row.get("resolved_external_account"),
-        },
+    }
+
+    # The revert lifecycle belongs to reconcile.py and process_revert — the posting
+    # path may only add to it. Writing these unconditionally blanks a stamp it does
+    # not own: re-queue a Failed run and every "Cancelled Externally" mark reconcile
+    # made would be erased. `if key in row` is not a usable test here — _row_to_dict
+    # builds from get_fieldnames_with_value(), so every field is present as None.
+    for field in ("revert_status", "revert_error", "supersedes", "superseded_by"):
+        if row.get(field):
+            patch[field] = row[field]
+
+    frappe.db.set_value(
+        "Cashew Import Row",
+        {"parent": run.name, "row_idx": row["row_idx"]},
+        patch,
     )
     emit_row_update(run.name, _row_patch(row))
 
@@ -443,14 +460,16 @@ def _row_patch(row: dict) -> dict:
     return patch
 
 
-def _update_counters(run, posted: int, failed: int, skipped: int) -> None:
-    run.db_set("rows_posted",  posted,  notify=True)
-    run.db_set("rows_failed",  failed,  notify=True)
-    run.db_set("rows_skipped", skipped, notify=True)
+def _update_counters(run, posted: int, failed: int, skipped: int, resynced: int = 0) -> None:
+    run.db_set("rows_posted",   posted,   notify=True)
+    run.db_set("rows_failed",   failed,   notify=True)
+    run.db_set("rows_skipped",  skipped,  notify=True)
+    run.db_set("rows_resynced", resynced, notify=True)
     emit_run_progress(run.name, {
-        "rows_posted":  posted,
-        "rows_failed":  failed,
-        "rows_skipped": skipped,
+        "rows_posted":   posted,
+        "rows_failed":   failed,
+        "rows_skipped":  skipped,
+        "rows_resynced": resynced,
     })
 
 

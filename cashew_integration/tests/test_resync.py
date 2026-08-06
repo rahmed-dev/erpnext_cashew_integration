@@ -18,10 +18,11 @@ from frappe.tests.utils import FrappeTestCase
 
 from cashew_integration.importer.resync import (
     RESYNCED,
+    SUPERSEDE_FAILED,
     SUPERSEDED,
-    _period_closed,
-    apply_resync,
+    apply_supersessions,
     mark_changed_rows,
+    screen_resyncs,
 )
 from cashew_integration.importer.sqlite_reader import read_sqlite
 
@@ -145,128 +146,199 @@ class TestChangeDetection(FrappeTestCase):
         self.assertEqual(mark_changed_rows(rows, run), 0)
 
 
-class TestResyncGuards(FrappeTestCase):
-    """A routine import can now cancel submitted GL, so refusing safely matters more
-    than succeeding."""
+def _tagged(row_idx=1, **over):
+    """A row carrying a resync tag, in the shape mark_changed_rows produces."""
+    row = {"row_idx": row_idx, "validation_status": "Valid",
+           "_resync_of": {"name": "ROW-OLD", "posted_doctype": "Journal Entry",
+                          "posted_docname": "ACC-JV-TEST-0001", "row_idx": 7,
+                          "parent": "RUN-OLD"}}
+    row.update(over)
+    return row
 
-    def test_closed_period_errors_the_row_and_writes_nothing(self):
-        row = {"row_idx": 1, "validation_status": "Valid",
-               "_resync_of": {"name": "ROW-OLD", "posted_doctype": "Journal Entry",
-                              "posted_docname": "ACC-JV-TEST-0001", "row_idx": 7,
-                              "parent": "RUN-OLD"}}
-        run = frappe._dict(company=COMPANY, name="RUN-NEW")
+
+RUN = frappe._dict(company=COMPANY, name="RUN-NEW")
+
+
+class TestScreenResyncs(FrappeTestCase):
+    """Screening runs before the posting loop. A row that cannot legally supersede
+    must be refused while refusing is still free — once the replacement is posted,
+    declining to cancel the original means two live entries."""
+
+    def test_closed_period_errors_the_row(self):
+        row = _tagged()
 
         with patch("cashew_integration.importer.resync.frappe.db.exists",
                    return_value=True), \
              patch("cashew_integration.importer.resync.frappe.db.get_value",
                    return_value=(1, "2026-06-29")), \
              patch("cashew_integration.importer.resync._period_closed",
-                   return_value="disabled Fiscal Year 2026"), \
-             patch("cashew_integration.importer.posting.post_row") as posted:
-            doctype, docname = apply_resync(row, run)
+                   return_value="disabled Fiscal Year 2026"):
+            screen_resyncs([row], RUN)
 
-        self.assertEqual((doctype, docname), ("", ""))
         self.assertEqual(row["validation_status"], "Error")
         self.assertEqual(row["validation_error_code"], "RESYNC_PERIOD_CLOSED")
-        posted.assert_not_called()
+        self.assertNotIn("_resync_of", row)
 
-    def test_failed_repost_leaves_the_original_submitted(self):
-        """Cancelling first and failing to repost would leave the period with neither
-        entry — worse than the stale figure being corrected."""
-        row = {"row_idx": 1, "validation_status": "Valid",
-               "_resync_of": {"name": "ROW-OLD", "posted_doctype": "Journal Entry",
-                              "posted_docname": "ACC-JV-TEST-0001", "row_idx": 7,
-                              "parent": "RUN-OLD"}}
-        run = frappe._dict(company=COMPANY, name="RUN-NEW")
+    def test_closed_period_errors_both_legs_of_a_transfer_pair(self):
+        """Erroring one leg alone leaves the other to fail as TRANSFER_PAIR_INCOMPLETE,
+        which names a symptom instead of the cause."""
+        src = _tagged(1, txn_type="Transfer", transfer_pair_row_idx=2)
+        dst = _tagged(2, txn_type="Transfer", transfer_pair_row_idx=1)
 
         with patch("cashew_integration.importer.resync.frappe.db.exists",
                    return_value=True), \
              patch("cashew_integration.importer.resync.frappe.db.get_value",
                    return_value=(1, "2026-06-29")), \
              patch("cashew_integration.importer.resync._period_closed",
-                   return_value=None), \
-             patch("cashew_integration.importer.posting.post_row",
-                   side_effect=Exception("boom")), \
-             patch("cashew_integration.importer.resync.frappe.get_doc") as get_doc:
-            doctype, _ = apply_resync(row, run)
+                   return_value="disabled Fiscal Year 2026"):
+            screen_resyncs([src, dst], RUN)
 
-        self.assertEqual(doctype, "")
-        self.assertEqual(row["validation_error_code"], "RESYNC_REPOST_FAILED")
-        get_doc.assert_not_called()
+        for leg in (src, dst):
+            self.assertEqual(leg["validation_error_code"], "RESYNC_PERIOD_CLOSED")
+            self.assertNotIn("_resync_of", leg)
 
-    def test_already_cancelled_original_posts_as_new_without_a_second_cancel(self):
-        row = {"row_idx": 1, "validation_status": "Valid",
-               "_resync_of": {"name": "ROW-OLD", "posted_doctype": "Journal Entry",
-                              "posted_docname": "ACC-JV-TEST-0001", "row_idx": 7,
-                              "parent": "RUN-OLD"}}
-        run = frappe._dict(company=COMPANY, name="RUN-NEW")
+    def test_already_cancelled_original_drops_the_tag(self):
+        """It posts as an ordinary new row — and must not be counted or logged as a
+        resync it never performed."""
+        row = _tagged()
 
         with patch("cashew_integration.importer.resync.frappe.db.exists",
                    return_value=True), \
              patch("cashew_integration.importer.resync.frappe.db.get_value",
-                   return_value=(2, "2026-06-29")), \
-             patch("cashew_integration.importer.posting.post_row",
-                   return_value=("Journal Entry", "ACC-JV-TEST-0002")) as posted, \
-             patch("cashew_integration.importer.resync.frappe.get_doc") as get_doc:
-            doctype, docname = apply_resync(row, run)
+                   return_value=(2, "2026-06-29")):
+            screen_resyncs([row], RUN)
 
-        self.assertEqual((doctype, docname), ("Journal Entry", "ACC-JV-TEST-0002"))
-        posted.assert_called_once()
-        get_doc.assert_not_called()
+        self.assertNotIn("_resync_of", row)
+        self.assertEqual(row["validation_status"], "Valid")
 
-    def test_open_period_cancels_the_original_and_stamps_both_rows(self):
-        row = {"row_idx": 1, "validation_status": "Valid",
-               "_resync_of": {"name": "ROW-OLD", "posted_doctype": "Journal Entry",
-                              "posted_docname": "ACC-JV-TEST-0001", "row_idx": 7,
-                              "parent": "RUN-OLD"}}
-        run = frappe._dict(company=COMPANY, name="RUN-NEW")
-
+    def test_missing_original_drops_the_tag(self):
+        row = _tagged()
         with patch("cashew_integration.importer.resync.frappe.db.exists",
-                   return_value=True), \
-             patch("cashew_integration.importer.resync.frappe.db.get_value",
-                   return_value=(1, "2026-06-29")), \
-             patch("cashew_integration.importer.resync._period_closed",
-                   return_value=None), \
-             patch("cashew_integration.importer.posting.post_row",
-                   return_value=("Journal Entry", "ACC-JV-TEST-0002")), \
-             patch("cashew_integration.importer.resync.frappe.get_doc") as get_doc, \
+                   return_value=False):
+            screen_resyncs([row], RUN)
+        self.assertNotIn("_resync_of", row)
+
+
+class TestApplySupersessions(FrappeTestCase):
+    """Cancellation happens only after the whole run has posted, so the replacement
+    provably exists before anything is cancelled."""
+
+    def test_cancels_the_original_and_records_lineage_both_ways(self):
+        row = _tagged(posted_doctype="Journal Entry",
+                      posted_docname="ACC-JV-TEST-0002")
+
+        with patch("cashew_integration.importer.resync.frappe.get_doc") as get_doc, \
              patch("cashew_integration.importer.resync.frappe.db.set_value") as set_value:
-            doctype, docname = apply_resync(row, run)
+            superseded, failed = apply_supersessions([row], RUN)
 
-        self.assertEqual(docname, "ACC-JV-TEST-0002")
+        self.assertEqual((superseded, failed), (1, 0))
         get_doc.return_value.cancel.assert_called_once()
         self.assertEqual(row["revert_status"], RESYNCED)
-        self.assertEqual(set_value.call_args[0][2]["revert_status"], SUPERSEDED)
+        self.assertEqual(row["supersedes"], "ACC-JV-TEST-0001")
+        patch_written = set_value.call_args[0][2]
+        self.assertEqual(patch_written["revert_status"], SUPERSEDED)
+        self.assertEqual(patch_written["superseded_by"], "ACC-JV-TEST-0002")
+
+    def test_a_row_that_never_posted_is_not_superseded(self):
+        """A refused or failed row leaves the original in place — the ledger keeps the
+        stale figure, which is recoverable; cancelling would lose the entry entirely."""
+        row = _tagged()  # no posted_docname
+
+        with patch("cashew_integration.importer.resync.frappe.get_doc") as get_doc:
+            superseded, failed = apply_supersessions([row], RUN)
+
+        self.assertEqual((superseded, failed), (0, 0))
+        get_doc.assert_not_called()
+
+    def test_a_transfer_pair_cancels_its_shared_document_once(self):
+        prior = {"name": "ROW-OLD", "posted_doctype": "Journal Entry",
+                 "posted_docname": "ACC-JV-TEST-0001", "row_idx": 7,
+                 "parent": "RUN-OLD"}
+        legs = [
+            {"row_idx": 1, "_resync_of": prior, "posted_doctype": "Journal Entry",
+             "posted_docname": "ACC-JV-TEST-0002"},
+            {"row_idx": 2, "_resync_of": prior, "posted_doctype": "Journal Entry",
+             "posted_docname": "ACC-JV-TEST-0002"},
+        ]
+
+        with patch("cashew_integration.importer.resync.frappe.get_doc") as get_doc, \
+             patch("cashew_integration.importer.resync.frappe.db.set_value"):
+            superseded, failed = apply_supersessions(legs, RUN)
+
+        self.assertEqual((superseded, failed), (1, 0),
+                         "one shared JE, cancelled once")
+        get_doc.return_value.cancel.assert_called_once()
+        for leg in legs:
+            self.assertEqual(leg["revert_status"], RESYNCED)
+            self.assertEqual(leg["supersedes"], "ACC-JV-TEST-0001")
+
+    def test_a_failed_cancel_is_counted_failed_and_says_both_are_live(self):
+        """This is the one outcome that puts two live documents in the ledger for a
+        single transaction. It must fail the run, never pass quietly."""
+        row = _tagged(posted_doctype="Journal Entry",
+                      posted_docname="ACC-JV-TEST-0002")
+
+        with patch("cashew_integration.importer.resync.frappe.get_doc",
+                   side_effect=Exception("locked")), \
+             patch("cashew_integration.importer.resync.frappe.log_error"), \
+             patch("cashew_integration.importer.resync.frappe.get_traceback",
+                   return_value="tb"):
+            superseded, failed = apply_supersessions([row], RUN)
+
+        self.assertEqual((superseded, failed), (0, 1))
+        self.assertEqual(row["revert_status"], SUPERSEDE_FAILED)
+        self.assertIn("BOTH are now live", row["revert_error"])
 
     def test_the_cancel_is_flagged_as_ours(self):
         """Without the flag, reconcile.on_document_cancelled reports the app's own
         cancel as an external one."""
         seen = {}
-        row = {"row_idx": 1, "validation_status": "Valid",
-               "_resync_of": {"name": "ROW-OLD", "posted_doctype": "Journal Entry",
-                              "posted_docname": "ACC-JV-TEST-0001", "row_idx": 7,
-                              "parent": "RUN-OLD"}}
-        run = frappe._dict(company=COMPANY, name="RUN-NEW")
+        row = _tagged(posted_doctype="Journal Entry",
+                      posted_docname="ACC-JV-TEST-0002")
 
         def _capture(*_args, **_kwargs):
             seen["flag"] = frappe.flags.get("cashew_reverting")
             return frappe._dict(cancel=lambda: None)
 
-        with patch("cashew_integration.importer.resync.frappe.db.exists",
-                   return_value=True), \
-             patch("cashew_integration.importer.resync.frappe.db.get_value",
-                   return_value=(1, "2026-06-29")), \
-             patch("cashew_integration.importer.resync._period_closed",
-                   return_value=None), \
-             patch("cashew_integration.importer.posting.post_row",
-                   return_value=("Journal Entry", "ACC-JV-TEST-0002")), \
-             patch("cashew_integration.importer.resync.frappe.get_doc",
+        with patch("cashew_integration.importer.resync.frappe.get_doc",
                    side_effect=_capture), \
              patch("cashew_integration.importer.resync.frappe.db.set_value"):
-            apply_resync(row, run)
+            apply_supersessions([row], RUN)
 
         self.assertEqual(seen.get("flag"), "RUN-NEW")
         self.assertIsNone(frappe.flags.get("cashew_reverting"), "flag must be cleared")
+
+
+class TestTransferPairTagging(FrappeTestCase):
+    """A transfer's two legs share one Journal Entry but hash separately."""
+
+    def test_editing_one_leg_tags_both(self):
+        """Otherwise the unedited leg is skipped as a duplicate, the tagged leg is
+        orphaned as TRANSFER_PAIR_INCOMPLETE, and the stale JV stays submitted."""
+        rows = [
+            {"row_idx": 1, "source_pk": "pk-1", "source_hash": "new-hash",
+             "validation_status": "Valid", "txn_type": "Transfer",
+             "transfer_pair_row_idx": 2},
+            {"row_idx": 2, "source_pk": "pk-2", "source_hash": "unchanged",
+             "validation_status": "Valid", "txn_type": "Transfer",
+             "transfer_pair_row_idx": 1},
+        ]
+        prior = [
+            {"name": "ROW-A", "source_pk": "pk-1", "source_hash": "old-hash",
+             "row_idx": 7, "posted_doctype": "Journal Entry",
+             "posted_docname": "ACC-JV-TEST-0001", "parent": "RUN-OLD"},
+            {"name": "ROW-B", "source_pk": "pk-2", "source_hash": "unchanged",
+             "row_idx": 8, "posted_doctype": "Journal Entry",
+             "posted_docname": "ACC-JV-TEST-0001", "parent": "RUN-OLD"},
+        ]
+
+        with patch("cashew_integration.importer.resync.frappe.db.sql",
+                   return_value=prior):
+            tagged = mark_changed_rows(rows, RUN)
+
+        self.assertEqual(tagged, 2)
+        self.assertEqual(rows[1]["_resync_of"]["name"], "ROW-B",
+                         "the partner keeps its own prior row when it has one")
 
 
 class TestStaleLoanMatcher(FrappeTestCase):
@@ -345,3 +417,153 @@ class TestIdempotencyStillSkipsUnchangedRows(FrappeTestCase):
 
         self.assertEqual(rows[0]["validation_status"], "Valid",
                          "an edited row must post, not skip as a duplicate")
+
+
+class TestWindowReasonGate(FrappeTestCase):
+    """An import window may only CREATE entries dated inside it.
+
+    Widening the reader to created-OR-modified means it now returns transactions dated
+    before the window that were merely edited inside it. One with a prior posting is a
+    revision to apply; one without is a transaction the operator never asked to import,
+    and posting it backdates a new entry into an earlier period.
+    """
+
+    def test_reader_labels_why_the_row_survived_the_window(self):
+        edited_only = read_sqlite(
+            _build_sqlite(148674.0, MODIFIED), "PKR",
+            from_date="2026-07-01", to_date="2026-07-31",
+        )[0]
+        created_in = read_sqlite(
+            _build_sqlite(148674.0, MODIFIED), "PKR",
+            from_date="2026-06-01", to_date="2026-06-30",
+        )[0]
+
+        self.assertEqual(edited_only["_window_reason"], "modified")
+        self.assertEqual(created_in["_window_reason"], "created")
+        self.assertNotIn(
+            "_window_reason", {k: 1 for k in edited_only if not k.startswith("_")},
+            "private key — never persisted to the child table",
+        )
+
+    def test_no_window_at_all_is_always_created(self):
+        rows = read_sqlite(_build_sqlite(148674.0, MODIFIED), "PKR")
+        self.assertEqual(rows[0]["_window_reason"], "created")
+
+    def test_edited_row_with_no_prior_posting_is_skipped_not_posted(self):
+        from cashew_integration.importer.idempotency import apply_idempotency_guard
+
+        rows = [{"row_idx": 1, "source_pk": "pk-9", "source_hash": "h",
+                 "txn_date": "2025-11-02", "source_modified": "2026-08-05 10:00:00",
+                 "validation_status": "Valid", "_window_reason": "modified"}]
+
+        with patch("cashew_integration.importer.idempotency.mark_changed_rows",
+                   return_value=0), \
+             patch("cashew_integration.importer.idempotency._fetch_posted_hashes",
+                   return_value={}), \
+             patch("cashew_integration.importer.idempotency._fetch_erp_document_hashes",
+                   return_value={}):
+            apply_idempotency_guard(rows, RUN)
+
+        self.assertEqual(rows[0]["validation_status"], "Skipped")
+        self.assertIn("Widen the window", rows[0]["validation_error_message"])
+
+    def test_edited_row_with_a_prior_posting_still_resyncs(self):
+        from cashew_integration.importer.idempotency import apply_idempotency_guard
+
+        rows = [{"row_idx": 1, "source_pk": "pk-1", "source_hash": "new-hash",
+                 "txn_date": "2026-06-29", "validation_status": "Valid",
+                 "_window_reason": "modified"}]
+
+        with patch("cashew_integration.importer.idempotency.mark_changed_rows",
+                   side_effect=lambda r, _run: r[0].update(
+                       {"_resync_of": {"posted_docname": "ACC-JV-TEST-0001"}}) or 1), \
+             patch("cashew_integration.importer.idempotency._fetch_posted_hashes",
+                   return_value={}), \
+             patch("cashew_integration.importer.idempotency._fetch_erp_document_hashes",
+                   return_value={}):
+            apply_idempotency_guard(rows, RUN)
+
+        self.assertEqual(rows[0]["validation_status"], "Valid",
+                         "the loan case: out-of-window, but a revision of a posting")
+
+
+class TestReconcileTreatsSupersessionAsLineage(FrappeTestCase):
+    """A superseded document is cancelled by design. Reported as drift it would make
+    every run that ever resynced permanently unclean, and the real signal would drown."""
+
+    def _report(self, row, successor_docstatus=1, successor_exists=True):
+        from cashew_integration.importer import reconcile as mod
+
+        with patch.object(mod.frappe, "get_doc",
+                          return_value=frappe._dict(status="Completed", get=lambda *_: 0)), \
+             patch.object(mod.frappe, "get_all",
+                          side_effect=[[frappe._dict(row)], []]), \
+             patch.object(mod.frappe.db, "exists",
+                          side_effect=lambda _dt, name: (
+                              successor_exists if name == "ACC-JV-TEST-0002" else True)), \
+             patch.object(mod.frappe.db, "get_value",
+                          side_effect=lambda _dt, name, fields: (
+                              successor_docstatus if fields == "docstatus"
+                              else (2, "2026-06-29"))):
+            return mod.reconcile_run("RUN-OLD")
+
+    def _row(self, **over):
+        base = {"name": "ROW-OLD", "row_idx": 7, "txn_date": "2026-06-29",
+                "raw_amount": 150000.0, "base_amount": 150000.0,
+                "posted_doctype": "Journal Entry",
+                "posted_docname": "ACC-JV-TEST-0001",
+                "validation_status": "Valid", "revert_status": SUPERSEDED,
+                "superseded_by": "ACC-JV-TEST-0002", "txn_type": "Loan Receivable"}
+        base.update(over)
+        return base
+
+    def test_a_live_successor_is_not_an_issue(self):
+        report = self._report(self._row())
+        self.assertEqual(report["issues"], [])
+
+    def test_a_vanished_successor_is_reported(self):
+        report = self._report(self._row(), successor_exists=False)
+        self.assertEqual(report["issues"][0]["problem"], "supersession-broken")
+
+    def test_a_cancelled_successor_is_reported(self):
+        report = self._report(self._row(), successor_docstatus=2)
+        self.assertEqual(report["issues"][0]["problem"], "supersession-broken")
+
+    def test_an_ordinary_external_cancel_is_still_drift(self):
+        report = self._report(self._row(revert_status=None, superseded_by=None))
+        self.assertEqual(report["issues"][0]["problem"], "cancelled")
+
+
+class TestPostingPathDoesNotOwnRevertState(FrappeTestCase):
+    """revert_status belongs to reconcile.py and process_revert. The posting path may
+    only add to it — writing it unconditionally erased stamps it did not make."""
+
+    def test_write_row_result_does_not_blank_an_existing_stamp(self):
+        from cashew_integration.importer import worker as mod
+
+        # The shape _row_to_dict produces: every field present, most of them None.
+        row = {"row_idx": 1, "validation_status": "Valid", "revert_status": None,
+               "revert_error": None, "supersedes": None, "superseded_by": None}
+        run = frappe._dict(name="RUN-NEW")
+
+        with patch.object(mod.frappe.db, "set_value") as set_value, \
+             patch.object(mod, "emit_row_update"):
+            mod._write_row_result(run, row)
+
+        self.assertNotIn("revert_status", set_value.call_args[0][2])
+        self.assertNotIn("revert_error", set_value.call_args[0][2])
+
+    def test_write_row_result_persists_a_resync_stamp(self):
+        from cashew_integration.importer import worker as mod
+
+        row = {"row_idx": 1, "validation_status": "Valid",
+               "revert_status": RESYNCED, "supersedes": "ACC-JV-TEST-0001"}
+        run = frappe._dict(name="RUN-NEW")
+
+        with patch.object(mod.frappe.db, "set_value") as set_value, \
+             patch.object(mod, "emit_row_update"):
+            mod._write_row_result(run, row)
+
+        written = set_value.call_args[0][2]
+        self.assertEqual(written["revert_status"], RESYNCED)
+        self.assertEqual(written["supersedes"], "ACC-JV-TEST-0001")

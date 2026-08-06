@@ -37,11 +37,28 @@ const LEDGER_NOTICES = {
     title: 'Revert failed — the document may still be submitted',
     cls: 'bg-red-50 border-red-200 text-red-900',
   },
+  'Supersede-Failed': {
+    title: 'Both documents are live — this transaction is counted twice',
+    cls: 'bg-red-50 border-red-200 text-red-900',
+  },
 };
 
 const ledgerNotice = computed(
   () => (props.row && LEDGER_NOTICES[props.row.revert_status]) || null,
 );
+
+// Supersession is a chain of documents, so show it as documents. Reading a JE name
+// out of a prose sentence in revert_error and pasting it into the Desk URL bar is
+// exactly the friction that makes people skip the check.
+const lineage = computed(() => {
+  const row = props.row;
+  if (!row) return [];
+  const doctype = (row.posted_doctype || 'Journal Entry').toLowerCase().replace(/ /g, '-');
+  return [
+    row.supersedes && { label: 'Replaces', name: row.supersedes, doctype },
+    row.superseded_by && { label: 'Replaced by', name: row.superseded_by, doctype },
+  ].filter(Boolean);
+});
 </script>
 
 <template>
@@ -70,6 +87,14 @@ const ledgerNotice = computed(
           >
             <p class="font-medium">{{ ledgerNotice.title }}</p>
             <p class="mt-0.5">{{ row.revert_error }}</p>
+            <p v-for="l in lineage" :key="l.label" class="mt-1">
+              {{ l.label }}:
+              <a
+                class="underline font-medium"
+                :href="`/app/${l.doctype}/${l.name}`"
+                target="_blank"
+              >{{ l.name }}</a>
+            </p>
           </div>
 
           <pre v-if="showJson" class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">{{ JSON.stringify(row, null, 2) }}</pre>

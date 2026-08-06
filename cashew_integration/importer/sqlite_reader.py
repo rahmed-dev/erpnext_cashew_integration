@@ -200,6 +200,7 @@ def _normalize_row(
     # real transaction date — see txn_date below, which stays on local_date.
     iso = local_date.isoformat()
     iso_modified = modified_dt.date().isoformat()
+    created_in_window = not (lo and iso < lo) and not (hi and iso > hi)
     if lo and iso < lo and iso_modified < lo:
         return None
     if hi and iso > hi and iso_modified > hi:
@@ -228,6 +229,12 @@ def _normalize_row(
         # carried for the FK pairing pass; not persisted to the child (leading _)
         "_paired_fk": raw["paired_transaction_fk"] or None,
         "_txn_pk": raw["transaction_pk"],
+        # Why this row survived the window. "modified" means its transaction date is
+        # OUTSIDE the requested bounds and only the edit brought it back — such a row
+        # is a revision of something already posted, never a new entry to create, or
+        # an August import would silently write November entries into the ledger.
+        # The idempotency guard enforces that; see apply_idempotency_guard.
+        "_window_reason": "created" if created_in_window else "modified",
         # Persisted (no leading underscore, so api._dict_to_child copies them).
         # source_pk is stable across edits where source_hash is not; the pair is what
         # lets a re-import recognise an edited transaction instead of treating it as

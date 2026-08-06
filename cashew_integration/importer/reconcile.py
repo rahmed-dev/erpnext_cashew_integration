@@ -25,6 +25,11 @@ import frappe
 EXTERNAL_CANCELLED = "Cancelled Externally"
 EXTERNAL_DELETED = "Deleted Externally"
 
+# Written by importer/resync.py. Imported by name rather than from that module to
+# keep the dependency one-way: resync already reaches into this module's flag.
+SUPERSEDED = "Superseded"
+RESYNCED = "Resynced"
+
 
 # ── live hooks ─────────────────────────────────────────────────────────────────
 
@@ -62,7 +67,11 @@ def _stamp_rows(doc, status: str, message: str) -> None:
         fields=["name", "parent", "row_idx", "revert_status"],
     )
     for row in rows:
-        if row.revert_status in ("Reverted", status):
+        # A Superseded row's document was cancelled by an import that replaced it.
+        # Deleting that cancelled document later must not overwrite the lineage with
+        # "Deleted Externally" — the successor is what carries the GL, and losing the
+        # pointer to it would turn a recorded replacement back into unexplained drift.
+        if row.revert_status in ("Reverted", SUPERSEDED, status):
             continue
         frappe.db.set_value(
             "Cashew Import Row",
@@ -100,7 +109,7 @@ def reconcile_run(run_name: str) -> dict:
         fields=[
             "name", "row_idx", "txn_date", "raw_amount", "base_amount",
             "posted_doctype", "posted_docname", "validation_status",
-            "revert_status", "txn_type",
+            "revert_status", "superseded_by", "txn_type",
         ],
         order_by="row_idx asc",
     )
@@ -125,6 +134,26 @@ def reconcile_run(run_name: str) -> dict:
         )
 
         if docstatus == 2:
+            # A supersession is a recorded replacement, not drift: the GL impact
+            # moved to a named successor rather than disappearing. That claim is
+            # VERIFIED here rather than taken on the strength of a status string —
+            # a cancelled document whose replacement is also gone is real drift, and
+            # only storing the successor's name makes the two distinguishable.
+            if row.revert_status == SUPERSEDED:
+                successor = row.superseded_by
+                if (
+                    successor
+                    and frappe.db.exists(doctype, successor)
+                    and frappe.db.get_value(doctype, successor, "docstatus") == 1
+                ):
+                    continue
+                issues.append(_issue(
+                    row, doctype, docname, "supersession-broken",
+                    f"Row was superseded by {successor or '(unrecorded)'}, but that "
+                    "document is missing or not submitted — the GL impact of this "
+                    "transaction is now absent entirely.",
+                ))
+                continue
             issues.append(_issue(row, doctype, docname, "cancelled",
                                  "Document is cancelled but the row still claims it."))
             continue
@@ -179,6 +208,7 @@ def _counter_drift(run, rows) -> dict:
         "rows_failed": sum(1 for r in rows if r.validation_status == "Error"),
         "rows_skipped": sum(1 for r in rows if r.validation_status == "Skipped"),
         "rows_posted": sum(1 for r in rows if r.posted_docname),
+        "rows_resynced": sum(1 for r in rows if r.revert_status == RESYNCED),
     }
     stored = {k: int(run.get(k) or 0) for k in actual}
 
@@ -193,6 +223,10 @@ def _counter_drift(run, rows) -> dict:
     if reverted and rows:
         compare.pop("rows_posted")
         stored_cmp.pop("rows_posted")
+        # Revert overwrites revert_status with "Reverted", erasing the Resynced marks
+        # the counter was built from. Same lifetime-counter argument as rows_posted.
+        compare.pop("rows_resynced")
+        stored_cmp.pop("rows_resynced")
 
     return {
         "stored": stored,

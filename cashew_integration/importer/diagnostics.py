@@ -40,6 +40,10 @@ _COLUMNS = [
     "posted_doctype",
     "posted_docname",
     "is_duplicate",
+    # A run that cancelled and replaced already-submitted documents must say so in
+    # its own report, not only in the error log.
+    "revert_status",
+    "supersedes",
     "review_recommended",
 ]
 
@@ -98,5 +102,7 @@ def _to_csv_row(row: dict) -> dict:
         "posted_doctype":           row.get("posted_doctype"),
         "posted_docname":           row.get("posted_docname"),
         "is_duplicate":             1 if row.get("is_duplicate") else 0,
+        "revert_status":            row.get("revert_status"),
+        "supersedes":               row.get("supersedes"),
         "review_recommended":       1 if row.get("txn_type") == "Adjustment" else 0,
     }

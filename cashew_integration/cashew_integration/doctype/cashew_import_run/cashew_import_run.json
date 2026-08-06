@@ -25,6 +25,7 @@
   "rows_posted",
   "rows_failed",
   "rows_skipped",
+  "rows_resynced",
   "period_start",
   "period_end",
   "column_break_17",
@@ -157,6 +158,14 @@
    "fieldname": "rows_skipped",
    "fieldtype": "Int",
    "label": "Skipped (Duplicate) Rows",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "description": "Rows that replaced an earlier posting because the source transaction was edited in Cashew. A subset of Posted Rows, not a separate outcome — surfaced because an import that rewrites already-submitted GL should be visible without reading the error log.",
+   "fieldname": "rows_resynced",
+   "fieldtype": "Int",
+   "label": "Resynced Rows",
    "read_only": 1,
    "no_copy": 1
   },

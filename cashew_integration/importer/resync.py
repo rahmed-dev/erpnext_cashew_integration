@@ -26,6 +26,20 @@ rewriting submitted GL, so every guard below fails the row rather than raising, 
 the original document is never cancelled unless its replacement can actually be
 written.
 
+Resync has its own lifecycle, deliberately placed OUTSIDE the worker's
+transaction-type switch:
+
+    screen_resyncs()      before anything is written — refuse what cannot be replaced
+    <the ordinary post loop, which knows nothing about resync>
+    apply_supersessions()  after everything is posted — cancel what was replaced
+
+The first version of this module hung the cancel-and-repost off one branch of that
+type switch, which the worker reached only for non-Transfer rows. An edited transfer
+leg therefore posted a second JV and left the stale one submitted — the exact
+double-count this module exists to prevent. Splitting the lifecycle in two means
+transfers, external transfers, loans and invoices all get the behaviour for free, and
+nothing is cancelled until the whole run has posted successfully.
+
 Only rows imported from a SQLite backup carry a ``source_pk``. CSV-era rows have none
 and take the unchanged hash-only path — their history is not covered.
 """
@@ -38,6 +52,7 @@ from cashew_integration.importer.errors import set_row_validation_error
 # Written to Cashew Import Row.revert_status by a resync.
 RESYNCED = "Resynced"        # this row replaced an earlier posting
 SUPERSEDED = "Superseded"    # this row's document was cancelled and replaced
+SUPERSEDE_FAILED = "Supersede-Failed"  # replacement posted, original still live
 
 
 # ── detection ──────────────────────────────────────────────────────────────────
@@ -99,92 +114,191 @@ def mark_changed_rows(rows: list[dict], run) -> int:
         row["_resync_of"] = prior
         tagged += 1
 
+    tagged += _propagate_to_transfer_partners(rows, prior_by_pk)
     return tagged
 
 
-# ── application ────────────────────────────────────────────────────────────────
+def _propagate_to_transfer_partners(rows: list[dict], prior_by_pk: dict) -> int:
+    """Tag the other leg of a transfer pair whenever one leg is tagged.
 
-def apply_resync(row: dict, run) -> tuple[str, str]:
-    """Cancel the stale document for *row* and post its replacement.
-
-    Returns ``(posted_doctype, posted_docname)``, or ``("", "")`` when a guard
-    refused. Guards mark the row Errored rather than raising so one bad row cannot
-    abort the whole run.
+    A transfer's two legs share a single Journal Entry, but they hash separately.
+    Editing only the source leg's amount leaves the destination leg's hash untouched,
+    so the hash guard would skip it — stranding the tagged leg with no partner and
+    failing it as TRANSFER_PAIR_INCOMPLETE while the stale JV stayed submitted. The
+    pair is replaced as a unit or not at all.
     """
-    # Imported here rather than at module scope: posting imports mapping, which
-    # imports this module's siblings, and a top-level import closes the cycle.
-    from cashew_integration.importer.posting import post_row
+    by_idx = {r["row_idx"]: r for r in rows if r.get("row_idx")}
+    extra = 0
 
-    prior = row.get("_resync_of") or {}
-    doctype = prior.get("posted_doctype") or "Journal Entry"
-    docname = prior.get("posted_docname")
-
-    if not docname or not frappe.db.exists(doctype, docname):
-        # Nothing live to replace — post as new. Not an error: the document may have
-        # been deleted, or reverted before this run started.
-        return post_row(row, run)
-
-    docstatus, posting_date = frappe.db.get_value(
-        doctype, docname, ["docstatus", "posting_date"]
-    )
-
-    if docstatus != 1:
-        # Already cancelled or still draft: it has no GL impact to replace.
-        return post_row(row, run)
-
-    closed = _period_closed(posting_date, run.company)
-    if closed:
-        set_row_validation_error(
-            row, "RESYNC_PERIOD_CLOSED",
-            f"{doctype} {docname} was edited in Cashew, but {posting_date} falls in a "
-            f"closed period ({closed}). The ledger still holds the pre-edit figure. "
-            "Reopen the period or post a manual adjustment.",
+    for row in list(rows):
+        if not row.get("_resync_of"):
+            continue
+        partner = by_idx.get(row.get("transfer_pair_row_idx"))
+        if partner is None or partner.get("_resync_of"):
+            continue
+        if partner.get("validation_status") in ("Error", "Skipped"):
+            continue
+        # The partner's own prior row when it has one, else the tagged leg's — both
+        # point at the same Journal Entry, which is what apply_supersessions cancels.
+        partner["_resync_of"] = (
+            prior_by_pk.get(partner.get("source_pk")) or row["_resync_of"]
         )
-        return "", ""
+        extra += 1
 
-    # Post the replacement FIRST. Cancelling first and failing to repost would leave
-    # the period with neither entry, which is worse than the stale figure this fixes.
-    try:
-        new_doctype, new_docname = post_row(row, run)
-    except Exception as exc:
-        set_row_validation_error(
-            row, "RESYNC_REPOST_FAILED",
-            f"{doctype} {docname} was edited in Cashew but the replacement could not "
-            f"be posted: {exc}. The original is untouched and still submitted.",
+    return extra
+
+
+# ── phase 1: screen, before any GL is written ──────────────────────────────────
+
+def screen_resyncs(rows: list[dict], run) -> None:
+    """Decide which tagged rows may supersede, *before* the posting loop runs.
+
+    A tag is dropped when there is nothing live to replace — that row is an ordinary
+    new posting and must not be counted or logged as a resync it never performed. A
+    tag is refused, with the row Errored, when the document it would replace sits in
+    a closed period: the run would otherwise post the corrected figure and then be
+    unable to cancel the stale one, leaving both in the ledger.
+    """
+    for row in list(rows):
+        prior = row.get("_resync_of")
+        if not prior:
+            continue
+
+        doctype = prior.get("posted_doctype") or "Journal Entry"
+        docname = prior.get("posted_docname")
+
+        if not docname or not frappe.db.exists(doctype, docname):
+            # Deleted, or reverted before this run started. Nothing to supersede.
+            row.pop("_resync_of", None)
+            continue
+
+        docstatus, posting_date = frappe.db.get_value(
+            doctype, docname, ["docstatus", "posting_date"]
         )
-        return "", ""
+        if docstatus != 1:
+            # Already cancelled or still a draft: no GL impact to replace.
+            row.pop("_resync_of", None)
+            continue
 
-    if not new_doctype:
-        set_row_validation_error(
-            row, "RESYNC_REPOST_FAILED",
-            f"{doctype} {docname} was edited in Cashew but the replacement could not "
-            "be posted. The original is untouched and still submitted.",
-        )
-        return "", ""
+        closed = _period_closed(posting_date, run.company)
+        if closed:
+            _refuse_pair(
+                rows, row, "RESYNC_PERIOD_CLOSED",
+                f"{doctype} {docname} was edited in Cashew, but {posting_date} falls "
+                f"in a closed period ({closed}). The ledger still holds the pre-edit "
+                "figure. Reopen the period or post a manual adjustment.",
+            )
 
-    # Our own cancel — the flag keeps reconcile.on_document_cancelled from reporting
-    # it as an external cancellation.
+
+def _refuse_pair(rows: list[dict], row: dict, code: str, message: str) -> None:
+    """Error *row*, and its transfer partner if it has one, with the same cause.
+
+    Erroring one leg alone would leave the other to fail later as
+    TRANSFER_PAIR_INCOMPLETE, which names a symptom instead of the actual reason.
+    """
+    set_row_validation_error(row, code, message)
+    row.pop("_resync_of", None)
+
+    partner_idx = row.get("transfer_pair_row_idx")
+    if not partner_idx:
+        return
+    for other in rows:
+        if other.get("row_idx") == partner_idx:
+            set_row_validation_error(other, code, message)
+            other.pop("_resync_of", None)
+            break
+
+
+# ── phase 2: supersede, after everything has posted ────────────────────────────
+
+def apply_supersessions(rows: list[dict], run) -> tuple[int, int]:
+    """Cancel the documents replaced by this run's postings.
+
+    Returns ``(superseded, failed)``. Runs only after the whole posting loop has
+    finished, so the replacement provably exists before anything is cancelled —
+    the period is never left with neither entry.
+
+    A failure here is the one outcome that puts two live documents in the ledger for
+    a single transaction, so it is stamped on the row, counted as a failure (which
+    fails the run) and logged. It must never pass quietly.
+    """
+    superseded = failed = 0
+    seen: dict[tuple[str, str], str] = {}
+
+    for row in rows:
+        prior = row.get("_resync_of")
+        if not prior or not row.get("posted_docname"):
+            continue
+
+        doctype = prior.get("posted_doctype") or "Journal Entry"
+        docname = prior.get("posted_docname")
+        key = (doctype, docname)
+
+        # A transfer pair's two legs share one Journal Entry — cancel it once, then
+        # stamp the second leg from the first leg's result.
+        if key in seen:
+            _stamp_successor(row, doctype, docname, prior)
+            continue
+
+        try:
+            _cancel_superseded(doctype, docname, run)
+        except Exception as exc:
+            frappe.log_error(
+                frappe.get_traceback(),
+                f"Cashew Supersede Failed: run={run.name} doc={docname}",
+            )
+            row["revert_status"] = SUPERSEDE_FAILED
+            row["revert_error"] = (
+                f"{row['posted_docname']} was posted to replace {doctype} {docname}, "
+                f"but {docname} could not be cancelled: {exc}. BOTH are now live and "
+                "this transaction is counted twice — cancel one by hand."
+            )[:500]
+            failed += 1
+            continue
+
+        seen[key] = row["posted_docname"]
+        _stamp_prior(prior, row.get("posted_doctype") or "Journal Entry",
+                     row["posted_docname"])
+        _stamp_successor(row, doctype, docname, prior)
+        superseded += 1
+
+    return superseded, failed
+
+
+def _cancel_superseded(doctype: str, docname: str, run) -> None:
+    """Cancel a replaced document, flagged as the app's own cancel.
+
+    ``cashew_reverting`` keeps reconcile.on_document_cancelled from reporting this as
+    an external cancellation — it is a recorded supersession, not drift.
+    """
     frappe.flags.cashew_reverting = run.name
     try:
         frappe.get_doc(doctype, docname).cancel()
     finally:
         frappe.flags.cashew_reverting = None
 
-    _stamp_prior(prior, new_doctype, new_docname)
+
+def _stamp_successor(row: dict, doctype: str, docname: str, prior: dict) -> None:
     row["revert_status"] = RESYNCED
+    row["supersedes"] = docname
     row["revert_error"] = (
         f"Source transaction edited in Cashew. Replaces {doctype} {docname} "
         f"(row {prior.get('row_idx')} of {prior.get('parent')}), now cancelled."
     )[:500]
 
-    return new_doctype, new_docname
-
 
 def _stamp_prior(prior: dict, new_doctype: str, new_docname: str) -> None:
+    """Record the successor on the superseded row, as a document name.
+
+    ``superseded_by`` is stored rather than inferred so reconcile can *verify* the
+    lineage: a cancelled document whose replacement is live is not drift, but one
+    whose replacement has itself gone is. A bare status string cannot tell them apart.
+    """
     frappe.db.set_value(
         "Cashew Import Row", prior["name"],
         {
             "revert_status": SUPERSEDED,
+            "superseded_by": new_docname,
             "revert_error": (
                 f"Source transaction was edited in Cashew after this row posted. "
                 f"{prior.get('posted_doctype') or 'Journal Entry'} "

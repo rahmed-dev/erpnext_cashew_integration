@@ -149,6 +149,7 @@ def parse_and_preview(run_name: str) -> dict:
     run.rows_failed = sum(1 for r in rows if r.get("validation_status") == "Error")
     run.rows_skipped = 0
     run.rows_posted = 0
+    run.rows_resynced = 0
     run.period_start, run.period_end = _compute_txn_period(rows)
     run.status = "Parsed"
     run.save(ignore_permissions=False)
@@ -586,6 +587,7 @@ def get_run_progress(run_name: str) -> dict:
         "rows_posted":  run.rows_posted or 0,
         "rows_failed":  run.rows_failed or 0,
         "rows_skipped": run.rows_skipped or 0,
+        "rows_resynced": run.rows_resynced or 0,
         "rows_valid":   run.rows_valid or 0,
         "started_on":   str(run.started_on or ""),
         "finished_on":  str(run.finished_on or ""),
@@ -699,6 +701,7 @@ def row_explorer_load(run_name: str) -> dict:
         "rows_posted":       run.rows_posted,
         "rows_failed":       run.rows_failed,
         "rows_skipped":      run.rows_skipped,
+        "rows_resynced":     run.rows_resynced,
         "mutation_allowed":  run.status in _ROW_EXPLORER_MUTATION_ALLOWED_STATUSES,
         "rows":              rows,
         "enums": {
@@ -1295,7 +1298,7 @@ def _recent_runs(company: str) -> list[dict]:
             "name", "status", "company",
             "period_start", "period_end",
             "rows_total", "rows_valid", "rows_failed", "rows_posted", "rows_skipped",
-            "modified",
+            "rows_resynced", "modified",
         ],
         order_by="modified desc",
         limit=5,
