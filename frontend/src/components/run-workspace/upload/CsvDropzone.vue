@@ -15,24 +15,56 @@ const fileInfo = ref(null);
 const hover = ref(false);
 const uploading = ref(false);
 
-// CSV MIME set (browsers report these for .csv). SQLite has no reliable MIME, so we
-// widen by EXTENSION (.sql/.sqlite/.db) and add best-effort MIME hints for the picker.
-const ACCEPT_CSV = ['text/csv', 'application/vnd.ms-excel'];
-const ACCEPT_SQLITE = ['.sql', '.sqlite', '.db', 'application/x-sqlite3', 'application/vnd.sqlite3'];
+// Extensions are the authority — the browser-reported MIME for these files is
+// unreliable (Android hands us text/plain or application/octet-stream for a .csv;
+// SQLite has no registered MIME or iOS UTI at all). The MIME entries below are
+// picker hints only; onFile() enforces the extension.
+const EXT_CSV = ['.csv'];
+const EXT_SQLITE = ['.sql', '.sqlite', '.db'];
+const ACCEPT_CSV = [...EXT_CSV, 'text/csv', 'text/plain', 'application/vnd.ms-excel'];
+const ACCEPT_SQLITE = [
+  ...EXT_SQLITE,
+  'application/x-sqlite3',
+  'application/vnd.sqlite3',
+  'application/octet-stream',
+];
 // 50 MB is ample (a 553-txn Cashew DB is ~KBs). Bump here if a larger backup ever fails.
 const MAX_BYTES = 50 * 1024 * 1024;
 
+// iOS Files and some Android pickers grey out every entry when `accept` contains an
+// extension they cannot map to a known type — .sqlite/.db always, .csv often. On such
+// devices we send no `accept` at all and rely on the extension check in onFile().
+const isCoarsePointer =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches;
+
+const picker = ref(null);
+
 const isSqlite = computed(() => props.sourceType === 'SQLite');
-const acceptAttr = computed(() => (isSqlite.value ? ACCEPT_SQLITE : ACCEPT_CSV).join(','));
+const allowedExts = computed(() => (isSqlite.value ? EXT_SQLITE : EXT_CSV));
+const acceptAttr = computed(() => {
+  if (isCoarsePointer) return undefined;
+  return (isSqlite.value ? ACCEPT_SQLITE : ACCEPT_CSV).join(',');
+});
 const hintCopy = computed(() => (isSqlite.value ? 'SQLite backup up to 50 MB' : 'CSV up to 50 MB'));
 
 function pickFile() {
   if (props.disabled || uploading.value) return;
-  document.getElementById('cashew-csv-picker')?.click();
+  picker.value?.click();
+}
+
+function hasAllowedExt(name) {
+  const lower = (name || '').toLowerCase();
+  return allowedExts.value.some((ext) => lower.endsWith(ext));
 }
 
 async function onFile(file) {
   if (!file) return;
+  if (!hasAllowedExt(file.name)) {
+    toast.error(`Select a ${allowedExts.value.join(' / ')} file.`);
+    return;
+  }
   if (file.size > MAX_BYTES) {
     toast.error('File must be under 50 MB.');
     return;
@@ -82,6 +114,21 @@ function clearFile() {
 
 <template>
   <div>
+    <!-- Kept OUTSIDE the dropzone: a click dispatched on an input nested inside the
+         dropzone bubbles back to its @click handler and re-opens the picker, which
+         mobile browsers abort. Visually hidden rather than display:none — iOS Safari
+         ignores programmatic .click() on a display:none input. -->
+    <input
+      id="cashew-csv-picker"
+      ref="picker"
+      type="file"
+      :accept="acceptAttr"
+      class="sr-only absolute w-px h-px overflow-hidden"
+      tabindex="-1"
+      aria-hidden="true"
+      @change="onInputChange"
+    />
+
     <div
       v-if="!fileInfo"
       :class="[
@@ -102,13 +149,6 @@ function clearFile() {
         <span class="font-medium text-[var(--cs-accent)]">Click to upload</span> or drag and drop
       </div>
       <div class="text-xs text-gray-500">{{ hintCopy }}</div>
-      <input
-        id="cashew-csv-picker"
-        type="file"
-        :accept="acceptAttr"
-        class="hidden"
-        @change="onInputChange"
-      />
     </div>
 
     <div v-else class="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2 bg-white">

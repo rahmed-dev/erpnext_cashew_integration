@@ -54,5 +54,5 @@ features:
   - id: f011
     slug: cashew-sql-import
     name: Cashew SQL (SQLite) Import
-    status: in-progress
-    stage: specced
+    status: done
+    stage: done

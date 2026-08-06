@@ -175,6 +175,39 @@ components:
       strong but a manual /cashew click-through is the last confirmation. NOT git-committed.
 
 patches:
+  - id: p002
+    name: Mobile/PWA file picker would not let you select a file
+    date: 2026-08-07
+    component: c005
+    stage: done
+    summary: >
+      Bug: on the installed PWA / mobile browser, tapping the dropzone either did nothing
+      or opened a picker with every file greyed out — no file selectable. Three independent
+      causes, all in frontend/src/components/run-workspace/upload/CsvDropzone.vue:
+      (1) RE-ENTRANT CLICK — the hidden <input type=file> was rendered INSIDE the dropzone
+      div that carries @click="pickFile". pickFile() called input.click(); that synthetic
+      click bubbled up to the same handler, which clicked the input again. Desktop browsers
+      swallow the re-entry; mobile WebKit/Chrome commonly abort the picker instead. Fix: the
+      input is hoisted out of the clickable div and addressed via a template ref instead of
+      document.getElementById.
+      (2) ACCEPT vs MOBILE PICKERS — iOS Files maps the accept list to UTIs and greys out
+      anything it cannot map; .sqlite/.db have no registered UTI or MIME at all, and Android
+      hands back text/plain or application/octet-stream for a .csv, neither of which was in
+      ACCEPT_CSV. Fix: extension tokens are now first-class in both accept lists (.csv;
+      .sql/.sqlite/.db) with widened MIME hints, and on coarse-pointer devices
+      (matchMedia('(pointer: coarse)')) the accept attribute is OMITTED ENTIRELY so the
+      picker shows everything. Selection is then enforced client-side by extension in
+      onFile() (hasAllowedExt → toast "Select a .csv file." / ".sql / .sqlite / .db"),
+      which matches the c005 contract that extension, not MIME, is the authority. Server
+      remains authoritative (reader raises SQL_FILE_UNREADABLE on a non-SQLite payload).
+      (3) display:none INPUT — class="hidden" is display:none, which iOS Safari has a long
+      history of ignoring for programmatic .click(). Fix: visually-hidden (sr-only, 1px,
+      tabindex=-1, aria-hidden) instead.
+      VERIFIED: yarn build green, PWA sw.js regenerated (30 precache entries). Requires
+      `bench build --app cashew_integration` on the server + a service-worker refresh on the
+      phone (the old sw.js precaches the previous bundle — see verification notes). NOT
+      git-committed.
+
   - id: p001
     name: Close queue-time gate hole — unpaired Transfer legs half-posted
     date: 2026-07-05
