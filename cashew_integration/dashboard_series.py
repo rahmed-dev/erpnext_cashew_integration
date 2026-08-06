@@ -293,6 +293,17 @@ def _top_n_series(by_label: dict[str, list[float]], n: int, size: int) -> list[d
             "label": OTHER_LABEL,
             "total": _r(sum(merged)),
             "values": [_r(v) for v in merged],
+            # What was folded, by name. A bare "(Other)" tells the reader an
+            # amount exists but not whether it is one forgotten category or
+            # thirty small ones, and the only way to find out is to leave the
+            # dashboard. The members are already in hand here, so they travel
+            # with the fold and the surfaces decide how much of it to show.
+            "members": [
+                {"label": label, "total": _r(sum(values))}
+                for label, values in sorted(
+                    tail, key=lambda kv: sum(kv[1]), reverse=True
+                )
+            ],
         })
     return out
 
@@ -414,6 +425,18 @@ def _balance_blocks(company, start, end, granularity, index, size):
             "label": OTHER_LABEL,
             "closing": _r(merged[-1] if merged else 0.0),
             "values": [_r(v) for v in merged],
+            # Ranked by closing balance, the same figure the fold itself was
+            # ranked on, so the list reads in the order the accounts would have
+            # appeared had the chart had room for them. See the note in
+            # `_top_n_series` for why the membership travels at all.
+            "members": [
+                {"label": label, "closing": _r(values[-1] if values else 0.0)}
+                for label, values in sorted(
+                    tail,
+                    key=lambda kv: kv[1][-1] if kv[1] else 0.0,
+                    reverse=True,
+                )
+            ],
         })
     return out, net_worth
 
@@ -818,6 +841,7 @@ def _fold_flow_nodes(links_raw, labels, root_types):
 
     keep: dict[str, str] = {}
     layer_of: dict[str, str] = {}
+    folded: list[str] = []
     for layer in FLOW_LAYERS:
         members = sorted(
             (a for a in throughput if root_types.get(a) == layer),
@@ -829,6 +853,7 @@ def _fold_flow_nodes(links_raw, labels, root_types):
                 keep[account] = labels.get(account, account)
             else:
                 keep[account] = FLOW_OTHER_LABELS[layer]
+                folded.append(account)
             layer_of[account] = layer
 
     # Disambiguate a label claimed by more than one layer.
@@ -857,8 +882,31 @@ def _fold_flow_nodes(links_raw, labels, root_types):
     # `throughput`, not `value`: for an account in the middle column this is
     # what came in PLUS what went out, which is not the account's balance and
     # must not be labelled as though it were.
+    # Which accounts ended up inside each layer's "(Other)" node, keyed by that
+    # node's final name. A folded sankey node is the least self-explanatory
+    # thing on the diagram — a ribbon of real size arriving at a box that names
+    # nothing — so it carries its membership like every other fold here.
+    # Keyed off `folded`, recorded where the fold happened, rather than matched
+    # back by label: the disambiguation above may have renamed the node.
+    folded_into: dict[str, list] = {}
+    for account in folded:
+        name = names[account]
+        if name not in node_value:
+            continue
+        folded_into.setdefault(name, []).append({
+            "label": labels.get(account, account),
+            "throughput": _r(throughput.get(account, 0.0)),
+        })
+    for members in folded_into.values():
+        members.sort(key=lambda m: m["throughput"], reverse=True)
+
     nodes = [
-        {"name": name, "layer": node_layer[name], "throughput": _r(value)}
+        {
+            "name": name,
+            "layer": node_layer[name],
+            "throughput": _r(value),
+            **({"members": folded_into[name]} if name in folded_into else {}),
+        }
         for name, value in sorted(node_value.items(), key=lambda kv: kv[1], reverse=True)
     ]
     links = [

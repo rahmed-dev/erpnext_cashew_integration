@@ -193,7 +193,7 @@ function dot(color) {
 </script>
 
 <template>
-  <div v-if="hasGoals" class="rounded-lg border border-gray-200 bg-white p-5">
+  <div v-if="hasGoals" class="rounded-lg border border-gray-200 bg-white p-4">
     <header class="mb-3">
       <h3 class="text-sm font-semibold text-gray-900">Savings goals</h3>
       <p class="text-xs text-gray-500">Against the target set in Cashew, never pro-rated</p>

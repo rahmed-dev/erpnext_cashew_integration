@@ -123,7 +123,7 @@ function dot(color) {
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 bg-white p-5">
+  <div class="rounded-lg border border-gray-200 bg-white p-4">
     <header class="mb-3 flex items-start justify-between gap-4">
       <div>
         <h3 class="text-sm font-semibold text-gray-900">Net worth</h3>

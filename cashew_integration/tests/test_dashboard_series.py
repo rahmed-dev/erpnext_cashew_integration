@@ -11,12 +11,16 @@ Run:  bench --site work.local run-tests --module cashew_integration.tests.test_d
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from cashew_integration.api import _top_n_with_other
 from cashew_integration.dashboard_series import (
     DAILY_GRANULARITY_MAX_DAYS,
+    OTHER_LABEL,
     TOP_N_FLOW_NODES,
+    TOP_N_SERIES,
     _flow_pairs,
     _fold_flow_nodes,
     _net_worth_block,
+    _top_n_series,
     build_buckets,
     bucket_key_for,
     cycle_boundaries,
@@ -231,6 +235,49 @@ class TestMoneyFlowPairing(FrappeTestCase):
         self.assertEqual(excluded, {"transfers": 0.0, "other": 0.0})
 
 
+class TestOtherFoldsNameTheirMembers(FrappeTestCase):
+    """Every top-N fold on the dashboard reports what it folded.
+
+    An "(Other)" row is an amount the reader cannot attribute to anything, and
+    the only way to resolve it used to be to leave the dashboard for a Desk
+    report. There are four such folds — two here, one in `api.py`, one in the
+    sankey (covered in TestMoneyFlowNodes) — and they are tested together
+    because the failure is the same in all of them and a new fold that forgets
+    the membership would otherwise pass silently.
+    """
+
+    def test_series_fold_lists_members_largest_first(self):
+        by_label = {f"cat{i}": [float(50 - i)] for i in range(TOP_N_SERIES + 3)}
+        rows = _top_n_series(by_label, TOP_N_SERIES, 1)
+
+        other = next(r for r in rows if r["label"] == OTHER_LABEL)
+        self.assertEqual(len(other["members"]), 3)
+        self.assertEqual(
+            [m["label"] for m in other["members"]],
+            [f"cat{TOP_N_SERIES}", f"cat{TOP_N_SERIES + 1}", f"cat{TOP_N_SERIES + 2}"],
+        )
+        # The members must account for the fold exactly — a list that does not
+        # add up to the row above it is worse than no list.
+        self.assertAlmostEqual(
+            sum(m["total"] for m in other["members"]), other["total"], places=2
+        )
+
+    def test_a_fold_that_did_not_happen_adds_no_row(self):
+        rows = _top_n_series({"a": [1.0], "b": [2.0]}, TOP_N_SERIES, 1)
+        self.assertEqual([r["label"] for r in rows], ["b", "a"])
+        self.assertNotIn(OTHER_LABEL, [r["label"] for r in rows])
+
+    def test_scalar_breakdown_fold_lists_members(self):
+        by_label = {f"acc{i}": float(50 - i) for i in range(13)}
+        rows = _top_n_with_other(by_label, 10)
+
+        other = next(r for r in rows if r["account"] == OTHER_LABEL)
+        self.assertEqual([m["account"] for m in other["members"]], ["acc10", "acc11", "acc12"])
+        self.assertAlmostEqual(
+            sum(m["amount"] for m in other["members"]), other["amount"], places=2
+        )
+
+
 class TestMoneyFlowNodes(FrappeTestCase):
     """The fold has to keep node names unique across the WHOLE graph — ECharts
     keys sankey links by name, so one label in two layers silently merges into
@@ -257,6 +304,31 @@ class TestMoneyFlowNodes(FrappeTestCase):
         expense_names = {n["name"] for n in nodes if n["layer"] == "Expense"}
         self.assertIn("(Other categories)", expense_names)
         self.assertEqual(len(expense_names), TOP_N_FLOW_NODES + 1)
+
+    def test_the_other_node_names_what_it_folded(self):
+        """A ribbon of real size ending in an anonymous box is the one thing on
+        this diagram a reader cannot resolve without leaving the dashboard."""
+        labels = {f"e{i}": f"Cat {i}" for i in range(12)}
+        roots = {f"e{i}": "Expense" for i in range(12)}
+        labels["bank"] = "Bank"
+        roots["bank"] = "Asset"
+        raw = [("bank", f"e{i}", float(100 - i)) for i in range(12)]
+        nodes, _links = _fold_flow_nodes(raw, labels, roots)
+
+        other = next(n for n in nodes if n["name"] == "(Other categories)")
+        folded = [m["label"] for m in other["members"]]
+        self.assertEqual(len(folded), 12 - TOP_N_FLOW_NODES)
+        # Ranked by throughput, so the list reads in the order the nodes would
+        # have appeared had the diagram had room for them.
+        self.assertEqual(folded, [f"Cat {i}" for i in range(TOP_N_FLOW_NODES, 12)])
+        self.assertEqual(
+            sum(m["throughput"] for m in other["members"]), other["throughput"]
+        )
+
+        # A node that was NOT folded must not carry the key at all — an empty
+        # members list would render an empty "folded in here" block.
+        kept = next(n for n in nodes if n["name"] == "Cat 0")
+        self.assertNotIn("members", kept)
 
     def test_a_middle_node_reports_throughput_not_a_balance(self):
         """In plus out. The tooltip labels it as such; the key name must not

@@ -16,6 +16,7 @@
 // would be the failure that matters here — it looks correct and isn't.
 import { computed } from 'vue';
 import CsChart from '@/components/shared/CsChart.vue';
+import AmountDisplay from '@/components/shared/AmountDisplay.vue';
 import {
   RAMP, CHROME, alpha,
   moneyAxis, categoryAxis, moneyFormatters, tooltipRow, tooltipTitle,
@@ -41,6 +42,14 @@ const hasNegative = computed(() =>
   accounts.value.some((a) => (a.values || []).some((v) => (v || 0) < -0.005)),
 );
 const stacked = computed(() => !hasNegative.value);
+
+// The accounts the server folded into the "(Other)" band. The tooltip is
+// per-bucket and the fold only carries closing balances, so they are named
+// underneath rather than nested in it — an unnamed band in a stack of ten is
+// the one the reader most wants identified.
+const folded = computed(
+  () => accounts.value.find((a) => (a.members || []).length)?.members || [],
+);
 
 function axisLabel(bucket) {
   if (!isDaily.value) return bucket.label;
@@ -128,7 +137,7 @@ function dot(color) {
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 bg-white p-5">
+  <div class="rounded-lg border border-gray-200 bg-white p-4">
     <header class="mb-3">
       <h3 class="text-sm font-semibold text-gray-900">Account balances</h3>
       <p class="text-xs text-gray-500">
@@ -149,5 +158,13 @@ function dot(color) {
       aria-label="Closing balance per account over the period"
       empty-text="No account carried a balance in this period."
     />
+
+    <p v-if="folded.length" class="mt-2 text-[11px] leading-snug text-gray-500">
+      (Other) is
+      <span v-for="(m, i) in folded" :key="m.label">
+        <span class="text-gray-700">{{ m.label }}</span>
+        (<AmountDisplay :amount="m.closing" :currency="currency" signed />){{ i < folded.length - 1 ? ', ' : '' }}
+      </span>, closing.
+    </p>
   </div>
 </template>

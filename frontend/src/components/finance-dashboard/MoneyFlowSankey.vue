@@ -48,6 +48,9 @@ const hasData = computed(
   () => links.value.length > 0 && (inflow.value + outflow.value) > 0.005,
 );
 
+// A tooltip taller than the viewport clips with no sign it was cut.
+const NODE_MEMBER_LIMIT = 12;
+
 /** One colour per column. Income and expense keep their fixed semantic hues so
  *  the sankey agrees with the trend chart; the middle column is the accent,
  *  which is where the reader's own accounts live. */
@@ -96,8 +99,28 @@ const option = computed(() => {
         // balance — the label has to say which, or it reads as double the money.
         const layer = layerOf[p.name];
         const label = layer === 'Asset' ? 'In and out' : 'Total';
-        return tooltipTitle(p.name) + tooltipRow(dot(layerColor(layer)), label,
+        let out = tooltipTitle(p.name) + tooltipRow(dot(layerColor(layer)), label,
           money(p.data?.throughput ?? p.value ?? 0));
+
+        // An "(Other …)" node names nothing on its own. What it stands for is
+        // the first thing a reader asks on seeing a ribbon of real size end in
+        // an anonymous box.
+        const members = p.data?.members || [];
+        if (members.length) {
+          const shown = members.slice(0, NODE_MEMBER_LIMIT);
+          out += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid ${CHROME.border}">`
+            + `<div style="font-size:11px;color:${CHROME.textFaint};margin-bottom:3px">`
+            + `${members.length} folded in here</div>`;
+          for (const m of shown) {
+            out += tooltipRow(dot(CHROME.textFaint), m.label, money(m.throughput));
+          }
+          if (members.length > shown.length) {
+            out += `<div style="font-size:11px;color:${CHROME.textFaint};margin-top:3px">`
+              + `and ${members.length - shown.length} more</div>`;
+          }
+          out += '</div>';
+        }
+        return out;
       },
     },
     series: [
@@ -144,7 +167,7 @@ function dot(color) {
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 bg-white p-5">
+  <div class="rounded-lg border border-gray-200 bg-white p-4">
     <header class="mb-3 flex items-start justify-between gap-4">
       <div>
         <h3 class="text-sm font-semibold text-gray-900">Money flow</h3>

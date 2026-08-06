@@ -10,7 +10,7 @@ const emit = defineEmits(['open', 'new-import']);
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 bg-white p-5">
+  <div class="rounded-lg border border-gray-200 bg-white p-4">
     <header class="flex items-center justify-between mb-3">
       <div>
         <h3 class="text-sm font-semibold text-gray-900">Recent imports</h3>

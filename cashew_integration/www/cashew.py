@@ -43,6 +43,23 @@ def check_app_permission():
 	return "System Manager" in roles or "Accounts Manager" in roles
 
 
+def _current_fiscal_year(today):
+	"""The fiscal year containing `today`, as {name, start, end}, or None.
+
+	`get_fiscal_year` throws when no Fiscal Year record covers the date, which
+	is a legitimate state on a site that has not set one up yet and is not a
+	reason to fail the whole page. The client falls back to the calendar year
+	when this comes back None, and says so in the period label.
+	"""
+	try:
+		from erpnext.accounts.utils import get_fiscal_year
+
+		name, start, end = get_fiscal_year(today, as_dict=False)
+		return {"name": name, "start": str(start), "end": str(end)}
+	except Exception:
+		return None
+
+
 def get_boot():
 	user = frappe.session.user
 	user_doc = frappe.get_cached_doc("User", user)
@@ -83,6 +100,12 @@ def get_boot():
 		# Server-default period for dashboard (current month start → today)
 		"default_period_start": str(period_start),
 		"default_period_end": str(today),
+
+		# The FISCAL year, which is an ERPNext doctype and frequently is not the
+		# calendar year — this site runs July to June. The client cannot derive
+		# it, and guessing January would silently hand the reader six months of
+		# the previous year under a "This Fiscal Year" label.
+		"fiscal_year": _current_fiscal_year(today),
 
 		# Sole boot-time perm flag — other writes checked per-action (D5.3)
 		"can_write_settings": frappe.has_permission(

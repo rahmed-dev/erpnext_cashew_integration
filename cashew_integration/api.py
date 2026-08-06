@@ -1089,7 +1089,14 @@ def _top_n_with_other(by_label: dict, n: int) -> list[dict]:
     out = [{"account": c, "amount": _r(a)} for c, a in head]
     if tail:
         other_amt = sum(a for _, a in tail)
-        out.append({"account": "(Other)", "amount": _r(other_amt)})
+        out.append({
+            "account": "(Other)",
+            "amount": _r(other_amt),
+            # The accounts behind the fold, largest first. Same reasoning as the
+            # fold in dashboard_series: an amount the reader cannot attribute to
+            # anything is a question the dashboard raises and refuses to answer.
+            "members": [{"account": c, "amount": _r(a)} for c, a in tail],
+        })
     return out
 
 

@@ -2,7 +2,9 @@
 import { ref, computed } from 'vue';
 import { Dropdown, Button, Dialog, Input } from 'frappe-ui';
 import { ChevronDown, Calendar } from 'lucide-vue-next';
-import { resolvePeriodRange, formatRange, PERIOD_PRESET_LABELS } from '@/utils/period';
+import {
+  resolvePeriodRange, formatRange, hasFiscalYear, PERIOD_PRESET_LABELS,
+} from '@/utils/period';
 
 const props = defineProps({
   preset: { type: String, default: 'this-month' },
@@ -22,14 +24,22 @@ const PRESETS = [
   'custom',
 ];
 
+// With no Fiscal Year record on the site the preset falls back to the calendar
+// year, and calling that "This Fiscal Year" would be a claim about the books
+// that nothing supports. Both the button and the menu use the honest name.
+function presetLabel(p) {
+  if (p === 'this-fiscal-year' && !hasFiscalYear()) return 'This Year';
+  return PERIOD_PRESET_LABELS[p];
+}
+
 const label = computed(() => {
-  const base = PERIOD_PRESET_LABELS[props.preset] || 'Period';
+  const base = presetLabel(props.preset) || 'Period';
   if (props.preset === 'custom') return formatRange(props.period.start, props.period.end) || 'Custom';
   return base;
 });
 
 const dropdownOptions = computed(() => PRESETS.map((p) => ({
-  label: PERIOD_PRESET_LABELS[p],
+  label: presetLabel(p),
   onClick: () => selectPreset(p),
 })));
 

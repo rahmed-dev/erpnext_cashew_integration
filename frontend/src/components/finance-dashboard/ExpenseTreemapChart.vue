@@ -37,10 +37,23 @@ const rows = computed(() => props.series?.expense_by_category || []);
  */
 const nodes = computed(() =>
   rows.value
-    .map((r) => ({ name: r.label, value: r.total || 0, children: [] }))
+    .map((r) => ({
+      name: r.label,
+      value: r.total || 0,
+      children: [],
+      // Only the server's "(Other)" tile carries these — the categories it
+      // folded. Named in its tooltip so the tile is readable on its own terms
+      // rather than being an amount with no account of itself.
+      members: r.members || [],
+    }))
     .filter((n) => n.value > 0.005)
     .sort((a, b) => b.value - a.value),
 );
+
+// A tooltip taller than the window is worse than a truncated one: it clips at
+// an arbitrary point with no indication anything was cut. The tail is counted
+// instead, and the footnote below the chart carries every name regardless.
+const TOOLTIP_MEMBER_LIMIT = 12;
 
 /** Categories that netted to zero or below — drawable nowhere, listed instead. */
 const excluded = computed(() =>
@@ -51,6 +64,16 @@ const excluded = computed(() =>
 );
 
 const total = computed(() => nodes.value.reduce((sum, n) => sum + n.value, 0));
+
+/** The categories the server folded into "(Other)", named in full. */
+const folded = computed(() => nodes.value.find((n) => n.members.length)?.members || []);
+
+// The header counts CATEGORIES, not tiles. "(Other)" is one tile standing for
+// many, so counting tiles would under-report the breakdown by the size of the
+// fold — eleven tiles over thirty categories reading as eleven.
+const categoryCount = computed(
+  () => nodes.value.length - (folded.value.length ? 1 : 0) + folded.value.length,
+);
 const hasData = computed(() => nodes.value.length > 0 && total.value > 0.005);
 
 const option = computed(() => {
@@ -62,11 +85,27 @@ const option = computed(() => {
       trigger: 'item',
       formatter: (p) => {
         const share = ((p.value / sum) * 100).toFixed(1);
-        return (
-          tooltipTitle(p.name) +
-          tooltipRow(dot(p.color), 'Spent', money(p.value)) +
-          tooltipRow(dot(CHROME.textFaint), 'Share', `${share}%`)
-        );
+        let out = tooltipTitle(p.name)
+          + tooltipRow(dot(p.color), 'Spent', money(p.value))
+          + tooltipRow(dot(CHROME.textFaint), 'Share', `${share}%`);
+
+        const members = p.data?.members || [];
+        if (members.length) {
+          const shown = members.slice(0, TOOLTIP_MEMBER_LIMIT);
+          const rest = members.length - shown.length;
+          out += `<div style="margin-top:6px;padding-top:6px;border-top:1px solid ${CHROME.border}">`
+            + `<div style="font-size:11px;color:${CHROME.textFaint};margin-bottom:3px">`
+            + `${members.length} categories, too small to draw</div>`;
+          for (const m of shown) {
+            out += tooltipRow(dot(CHROME.textFaint), m.label, money(m.total));
+          }
+          if (rest > 0) {
+            out += `<div style="font-size:11px;color:${CHROME.textFaint};margin-top:3px">`
+              + `and ${rest} more, listed below the chart</div>`;
+          }
+          out += '</div>';
+        }
+        return out;
       },
     },
     series: [
@@ -113,7 +152,7 @@ function dot(color) {
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 bg-white p-5">
+  <div class="rounded-lg border border-gray-200 bg-white p-4">
     <header class="mb-3 flex items-start justify-between gap-4">
       <div>
         <h3 class="text-sm font-semibold text-gray-900">Where the money went</h3>
@@ -123,7 +162,7 @@ function dot(color) {
       </div>
       <div v-if="hasData" class="text-right shrink-0">
         <AmountDisplay :amount="total" :currency="currency" class="text-base font-semibold" />
-        <div class="text-xs text-gray-500 mt-0.5">{{ nodes.length }} categories</div>
+        <div class="text-xs text-gray-500 mt-0.5">{{ categoryCount }} categories</div>
       </div>
     </header>
 
@@ -134,6 +173,17 @@ function dot(color) {
       aria-label="Expense by category, sized by amount"
       empty-text="No expense was posted in this period."
     />
+
+    <!-- "(Other)" is a tile with no name of its own. The tooltip shows the
+         first dozen; this carries the rest, so no category is reachable only
+         by hovering. -->
+    <p v-if="folded.length" class="mt-3 text-[11px] leading-snug text-gray-500">
+      Folded into (Other), each too small for a tile:
+      <span v-for="(m, i) in folded" :key="m.label">
+        <span class="text-gray-700">{{ m.label }}</span>
+        (<AmountDisplay :amount="m.total" :currency="currency" />){{ i < folded.length - 1 ? ', ' : '' }}
+      </span>
+    </p>
 
     <!-- See the note at the top of this file: these cannot be tiles, so they
          are stated in words rather than dropped. -->

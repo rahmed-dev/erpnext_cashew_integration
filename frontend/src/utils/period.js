@@ -1,4 +1,14 @@
 // f010 — shared period→date-range resolution. Used by c005 + c007.
+//
+// THE FISCAL YEAR IS NOT THE CALENDAR YEAR. It is an ERPNext doctype and on
+// this deployment runs July to June. It cannot be computed here, so it is
+// resolved server-side into the boot dict and read back below. Until 2026-08-07
+// this resolver took a `fiscalYearStart` through its second argument and fell
+// back to January 1 when absent — and no caller ever passed one, so the fallback
+// was the only path that ever ran and "This Fiscal Year" quietly meant "this
+// calendar year". Reading boot here rather than at each call site means a new
+// caller cannot reintroduce that by forgetting an argument.
+import { useFiscalYear } from '@/boot';
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function iso(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
@@ -35,12 +45,22 @@ export function resolvePeriodRange(period, customRange) {
     return { start: iso(start), end: iso(today) };
   }
   if (period === 'this-fiscal-year') {
-    const fyStart = customRange?.fiscalYearStart;
+    // An explicit override still wins, then the site's own fiscal year, then
+    // the calendar year as a last resort. The end is capped at today: a fiscal
+    // year mostly in the future would otherwise stretch every chart across
+    // months that cannot contain data.
+    const fyStart = customRange?.fiscalYearStart || useFiscalYear()?.start;
     if (fyStart) return { start: fyStart, end: iso(today) };
     const ref = new Date(today.getFullYear(), 0, 1);
     return { start: iso(ref), end: iso(today) };
   }
   return null;
+}
+
+/** True when the fiscal year preset is running on the site's real fiscal year
+ *  rather than the calendar-year fallback. Surfaces use it to label honestly. */
+export function hasFiscalYear() {
+  return Boolean(useFiscalYear()?.start);
 }
 
 export const PERIOD_PRESET_LABELS = {

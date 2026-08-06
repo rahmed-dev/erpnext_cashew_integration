@@ -98,7 +98,7 @@ function subOf(it) {
     :is="clickable ? 'button' : 'div'"
     :type="clickable ? 'button' : undefined"
     :class="[
-      'rounded-lg border border-gray-200 bg-white p-4 text-left w-full block',
+      'rounded-lg border border-gray-200 bg-white p-3 text-left w-full block',
       clickable && !loading
         ? 'cursor-pointer hover:border-[var(--cs-accent)] hover:shadow-sm transition'
         : '',
@@ -108,20 +108,26 @@ function subOf(it) {
     @mouseleave="onLeave"
     @click="onClick"
   >
-    <div class="flex items-center justify-between mb-2">
-      <span class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-[var(--cs-accent-50)] text-[var(--cs-accent)]">
-        <component :is="icon" :size="14" />
+    <!-- Icon, label, delta and chevron share ONE line. Each on its own row cost
+         a full line of height per tile, and with seven tiles that was most of
+         the first screen spent on chrome rather than figures — worst on a phone,
+         where the tiles stack two-up and the rows multiply. -->
+    <div class="flex items-center gap-1.5 min-w-0">
+      <span class="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded bg-[var(--cs-accent-50)] text-[var(--cs-accent)]">
+        <component :is="icon" :size="12" />
       </span>
-      <div class="flex items-center gap-1.5">
+      <span class="text-[11px] text-gray-500 uppercase tracking-wide truncate min-w-0">{{ label }}</span>
+      <span class="ml-auto shrink-0 flex items-center gap-1">
         <DeltaChip v-if="!loading && prior != null" :current="amount" :prior="prior" :invert="invert" />
         <ChevronRight v-if="clickable && !loading" :size="14" class="text-gray-400" />
-      </div>
+      </span>
     </div>
-    <div class="text-xs text-gray-500 uppercase tracking-wide">{{ label }}</div>
-    <SkeletonBlock v-if="loading" class="h-7 mt-1 w-2/3" />
+    <SkeletonBlock v-if="loading" class="h-6 mt-1.5 w-2/3" />
     <div v-else class="mt-1">
       <AmountDisplay :amount="amount" :currency="currency" big />
-      <div v-if="caption" class="text-xs text-gray-500 mt-0.5">{{ caption }}</div>
+      <!-- The caption is the tile's only optional row, so it carries no top
+           margin of its own — a tile without one must not reserve the space. -->
+      <div v-if="caption" class="text-[11px] text-gray-500">{{ caption }}</div>
     </div>
 
     <Teleport to="body">

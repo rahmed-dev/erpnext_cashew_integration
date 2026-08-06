@@ -71,7 +71,9 @@ const kpiTiles = computed(() => {
 </script>
 
 <template>
-  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+  <!-- Two-up on a phone, not one. A tile is one label and one number; stacked
+       one per row, seven of them pushed every chart below the fold. -->
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
     <BalanceTile
       v-for="t in BALANCE_TILES"
       :key="t.id"

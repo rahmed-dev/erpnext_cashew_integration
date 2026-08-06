@@ -26,6 +26,14 @@ export function useDefaultPeriod() {
   };
 }
 
+/** The fiscal year containing today — { name, start, end } — or null when the
+ *  site has no Fiscal Year record covering it. Never the calendar year: the
+ *  caller has to decide what to do with the absence rather than be handed a
+ *  plausible wrong answer. */
+export function useFiscalYear() {
+  return boot.fiscal_year || null;
+}
+
 export function hasWriteSettings() {
   return Boolean(boot.can_write_settings);
 }

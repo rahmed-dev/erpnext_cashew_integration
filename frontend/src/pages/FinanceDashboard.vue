@@ -150,7 +150,7 @@ function onTileClick(tileId) {
 
     <template v-if="summary.loading && !summary.data">
       <BalanceTileGrid :data="null" />
-      <div class="grid lg:grid-cols-2 gap-4 mt-4">
+      <div class="grid lg:grid-cols-2 gap-3 mt-3">
         <SkeletonBlock class="h-72" />
         <SkeletonBlock class="h-72" />
       </div>
@@ -181,11 +181,11 @@ function onTileClick(tileId) {
         not a shrunken desktop grid (f010 D2.c). Nothing here relies on a
         neighbour being beside it rather than above it.
       -->
-      <section class="mt-8">
+      <section class="mt-6">
         <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Trends</h2>
         <p class="text-xs text-gray-400 mt-0.5">How income and balances moved over the period</p>
 
-        <div class="grid lg:grid-cols-2 gap-4 mt-3">
+        <div class="grid lg:grid-cols-2 gap-3 mt-2">
           <IncomeExpenseChart
             :series="summary.data.series"
             :income="summary.data.income_total"
@@ -201,7 +201,7 @@ function onTileClick(tileId) {
 
         <!-- Balance-sheet pair: the net total on the left, the accounts it is
              made of on the right. -->
-        <div class="grid lg:grid-cols-2 gap-4 mt-4">
+        <div class="grid lg:grid-cols-2 gap-3 mt-3">
           <NetWorthChart
             :series="summary.data.series"
             :currency="summary.data.currency"
@@ -213,13 +213,13 @@ function onTileClick(tileId) {
         </div>
       </section>
 
-      <section class="mt-8">
+      <section class="mt-6">
         <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Where it went</h2>
         <p class="text-xs text-gray-400 mt-0.5">The same spending by category, by day, and by route</p>
 
         <!-- Expense pair: the composition of the spending on the left, its
              distribution over time on the right. -->
-        <div class="grid lg:grid-cols-2 gap-4 mt-3">
+        <div class="grid lg:grid-cols-2 gap-3 mt-2">
           <ExpenseTreemapChart
             :series="summary.data.series"
             :currency="summary.data.currency"
@@ -239,11 +239,11 @@ function onTileClick(tileId) {
         />
       </section>
 
-      <section v-if="hasBudgets" class="mt-8">
+      <section v-if="hasBudgets" class="mt-6">
         <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Goals and limits</h2>
         <p class="text-xs text-gray-400 mt-0.5">Against the budgets set in Cashew, on their own cycles</p>
 
-        <div class="grid lg:grid-cols-2 gap-4 mt-3 items-start">
+        <div class="grid lg:grid-cols-2 gap-3 mt-2 items-start">
           <SavingsGoalCard
             :cycles="summary.data.budget_cycles || []"
             :currency="summary.data.currency"
@@ -255,7 +255,7 @@ function onTileClick(tileId) {
         </div>
       </section>
 
-      <section class="mt-8">
+      <section class="mt-6">
         <h2 class="text-xs font-semibold uppercase tracking-wide text-gray-500">Holdings and imports</h2>
         <p class="text-xs text-gray-400 mt-0.5">What the balances are made of, and where the data came from</p>
 

@@ -12,6 +12,11 @@ const props = defineProps({
   big: { type: Boolean, default: false },
 });
 
+// `big` is the balance-tile figure and nothing else. It scales with the
+// breakpoint because the tiles sit two-up on a phone, where a fixed 26px
+// "Rs 1,885,076.42" overflows its own card.
+const BIG_CLASS = 'text-[19px] sm:text-[22px] lg:text-[26px] font-semibold tracking-[-0.02em]';
+
 function numeric() {
   if (props.amount === null || props.amount === undefined || props.amount === '') return null;
   const n = typeof props.amount === 'number' ? props.amount : parseFloat(props.amount);
@@ -44,7 +49,7 @@ const direction = computed(() => {
   <span
     :class="[
       tabular ? 'tabular-nums' : '',
-      big ? 'text-[26px] font-semibold tracking-[-0.02em]' : '',
+      big ? BIG_CLASS : '',
       direction === 'up' ? 'text-green-700' : direction === 'down' ? 'text-red-700' : '',
     ]"
   >
