@@ -1,9 +1,53 @@
 id: f012
 name: Dashboard Analytics & Charts
 status: in-progress
-stage: ready-for-dev
+stage: dev-done
 owner: bmad-fb-quick
-status_history: [arch-in-progress, arch-done, ready-for-dev]
+status_history: [arch-in-progress, arch-done, ready-for-dev, dev-in-progress, dev-done]
+
+outstanding: >
+  All 15 components are built and their code paths verified from the server
+  side (unit tests plus live reads against work.local). NOT ONE SURFACE HAS
+  BEEN OPENED IN A BROWSER. The feature is therefore dev-done, not done: every
+  chart's geometry, the section rhythm introduced by c011 and the phone layout
+  are unproven, and several branches have no live data to render at all — the
+  treemap's excluded-category footnote, the heatmap's above-cap and refund
+  branches, the sankey's per-layer (Other) fold, and both budget cards (work
+  .local carries no Cashew Budget rows; c009/c013 were smoked with seeded
+  budgets that were then deleted). A visual pass at desktop and phone widths
+  is the remaining work.
+
+review_2026_08_07: >
+  A read-through review of the finished build found two real defects, both
+  confirmed against work.local and both now fixed.
+
+  ONE — income budgets came back with a negative spend, so c009 could never
+  have drawn anything. _spend_by_account_day nets debit minus credit, which is
+  the right direction for an expense account and the wrong one for an income
+  account, where money arrives as a credit. Probed live: Salary Income - CS
+  returned -80000.0 for the period. The gauge clamps its arc at zero while its
+  detail text does not, so a savings goal would have shown an empty dial over a
+  minus-sign percentage. budget_cycles now flips the sign when the budget's own
+  is_income flag is set — once, on the server, rather than in each of the two
+  surfaces that read the block. Re-probed with a seeded income budget: cycles
+  now read 84000, 40000, 40000. One cycle still reads negative, correctly: the
+  ledger carries a real 84,000 income reversal in that month.
+
+  TWO — money_flow returned a `total` that double-counted. It summed every
+  link, so the same money was counted once arriving from income and again
+  leaving to an expense: 80,000 in and 29,665.18 out were reported as
+  109,665.18 "traced through the period", a figure matching nothing in the
+  ledger, and the sankey's per-ribbon "share of flow" divided by it, halving
+  every percentage. The key is gone. The block now returns `inflow` and
+  `outflow` separately, the card shows both, and a ribbon's share is measured
+  against its own column.
+
+  Not fixed, and still open: c013 calls singleBar() eight times per budget per
+  render where c009 was refactored to a computed map; the sankey footnote lists
+  three of the four excluded categories, omitting income spent straight to an
+  expense; c009's partial-cycle footnote lacks the top margin c013's has; the
+  "Goals and limits" heading shows when only limits exist; and _load_budgets
+  scans GL from the earliest budget start_date rather than the filter start.
 
 build_mode: >
   Quick dev (user direction 2026-08-07) — no TD/UI/Review handoffs; one agent
@@ -156,9 +200,47 @@ build_order:
 components:
   - id: c001
     name: ECharts engine swap — vue-echarts, <CsChart> wrapper, chart theme + curated palette, port IncomeExpenseChart
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: []
     wave: 1
+    built: >
+      DONE 2026-08-07 (Quick dev). Files:
+        frontend/src/charts/echarts.js      — the ONLY module importing echarts.
+          Tree-shaken echarts/core + explicit registration of the whole f012
+          inventory (bar, line, pie, treemap, heatmap, sankey, gauge; grid,
+          tooltip, legend, visualMap, calendar, markLine, markPoint) so no
+          wave-2 chart has to touch engine wiring.
+        frontend/src/charts/palette.js      — locked 10-hue RAMP, SEMANTIC
+          income/expense/transfer, CHROME neutrals, readToken/accent, and the
+          alpha()/alphaToken() rgba builders that keep zrender off color-mix().
+        frontend/src/charts/theme.js        — baseOption (palette, fonts,
+          reduced-motion, tooltip skin pinned to the z-50 overlay band),
+          moneyAxis, categoryAxis, moneyFormatters, tooltipRow/tooltipTitle,
+          mergeOption (deep-merge; arrays replaced, caller wins).
+        frontend/src/components/shared/CsChart.vue — the wrapper. vue-echarts
+          and the engine load ASYNC inside it, so the chart chunk is not even
+          requested until a chart with data mounts. Owns theme merge, loading
+          skeleton, empty state, autoresize, and a MutationObserver on the
+          <html> style attribute so an accent change rebuilds the option.
+        frontend/src/utils/money.js         — currency formatting extracted from
+          AmountDisplay so a tooltip and a tile cannot disagree; AmountDisplay
+          now imports it (behaviour unchanged).
+        IncomeExpenseChart.vue ported to an ECharts donut. The port also retired
+          its hand-rolled cursor-tracking hover panel — the native tooltip
+          formatter renders the same top-5-accounts breakdown. Income/expense
+          now take SEMANTIC colours instead of accent/slate.
+        package.json: apexcharts + vue3-apexcharts REMOVED; echarts ^5.6.0 and
+          vue-echarts ^7.0.3 added. vue-echarts 8 was rejected — it peers on
+          echarts ^6 while frappe-ui pins ^5.6.0, which would have put two
+          echarts copies in node_modules. v7 peers on echarts 5.
+        vite.config.js: vendor-charts group now matches echarts|vue-echarts|zrender.
+      Verified: yarn build clean. vendor-charts is 741 kB raw / 250 kB gz and
+      LAZY (nothing but CsChart imports it). Tree-shaking confirmed by symbol
+      probe — treemap/sankey/gauge present, sunburst/radar/boxplot/candlestick
+      only as core string-table mentions. That is above Decision 1's 150-200 kB
+      gz estimate because the full inventory is registered up front; if it
+      matters later, register per chart instead.
     notes: >
       Gate component. Removes apexcharts + vue3-apexcharts from package.json.
       C5.9 RESOLVED — use vue-echarts, imported in exactly one file (<CsChart>),
@@ -173,9 +255,80 @@ components:
 
   - id: c002
     name: dashboard_summary time-series extension — daily_spend, adaptive series, budget_cycles
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: []
     wave: 1
+    built: >
+      2026-08-07. New module `cashew_integration/dashboard_series.py` holds all
+      three blocks; `api.dashboard_summary` gained exactly three response keys
+      (`daily_spend`, `series`, `budget_cycles`) and nothing else changed, so
+      every f010 tile keeps working untouched.
+
+      daily_spend — one grouped query over Expense accounts by posting_date,
+      densified in Python so every calendar day in the period is present with 0
+      where there was no posting. The calendar heatmap (c007) needs an
+      unbroken day grid and should not have to gap-fill.
+
+      series — `resolve_granularity` switches at 92 days INCLUSIVE of both
+      endpoints (2026-01-01..2026-04-02 is daily; one more day is monthly).
+      `build_buckets` emits a dense grid, and the first and last monthly
+      buckets are CLIPPED to the period so a filter starting mid-month does not
+      claim the earlier part of that month. Blocks: income, expense,
+      income_by_category, expense_by_category (top 10 by absolute total plus a
+      folded "(Other)"), balances, and totals.
+
+      balances — running GL sums exactly as C5.8 specifies: one grouped query
+      for the opening cumulative as of the day before period_start, one grouped
+      query for in-period movement by (account, day), then a Python prefix sum
+      across the grid. A bucket with no movement carries the prior balance
+      forward instead of dropping to zero. Accounts flat at zero across the
+      whole window are dropped so a stacked chart is not padded with dormant
+      chart-of-accounts rows.
+
+      Bucketing is done in Python over day-grouped SQL rather than with a
+      SQL date-truncation expression. Same single-scan cost, and it keeps the
+      query dialect-neutral.
+
+      budget_cycles — `cycle_boundaries` is pure and fully unit-tested now: it
+      walks backwards from the budget's anchor as well as forwards, so a filter
+      predating start_date still lands on the budget's own grid, and a cycle
+      running past period_end is emitted with `partial: true`. An unrecognised
+      reoccurrence raises (D3.d / C5.5) instead of defaulting to monthly.
+      `_load_budgets` is guarded on `frappe.db.table_exists("Cashew Budget")`
+      and returns [] until c012 exists, so the block ships dormant rather than
+      500ing the dashboard. THE FIELD NAMES IN `_load_budgets` ARE THE CONTRACT
+      c012 MUST SATISFY: Cashew Budget {company, disabled, budget_name, amount,
+      start_date, reoccurrence, period_length} plus child table Cashew Budget
+      Account {account}.
+
+      DELIBERATE SIGN DIVERGENCE, carried forward to c003/c004. The existing
+      `income_total` / `expense_total` scalars clamp each GL row at zero, so a
+      reversing posting never shows as negative. The series blocks NET per
+      bucket instead, because a trend line that hides a refund inside its own
+      bucket misreports the shape of the period. On live data the two disagree:
+      income_total 274000 vs series total 190000 over 2025-01-01..2026-08-07
+      (expense reconciles exactly). `series.totals` exposes the series sums so
+      the gap is visible rather than surprising. c003 and c004 must not put a
+      tile and a chart total from different sources side by side — pick one
+      convention per surface and label it.
+
+      _period_pnl was left completely untouched on purpose: folding it into the
+      new grouped query would have changed the per-row clamp into a per-day
+      clamp and quietly moved the existing tiles.
+
+      Verified: 13 unit tests green (granularity boundary both sides, month-end
+      clipping, February, timezone-local bucket key, weekly-over-a-quarter,
+      anchor alignment, partial flag, period_length multiplier, backwards walk,
+      raise-on-unknown-enum) plus a live smoke run on both sides of the 92-day
+      switch — expense_total, series expense sum and daily_spend sum all agree
+      to the cent.
+
+      NOTE: `bench run-tests` cannot start on this bench at all — it dies with
+      "DocType Department Approver not found" during test-site boot, on
+      existing modules too (reproduced against test_integrity). Pre-existing
+      environment fault, unrelated to f012. Tests were executed through
+      `bench --site work.local console` with unittest's loader instead.
     notes: >
       Gate component. Both of this component's former open questions are CLOSED
       by C5.8 — build to it, do not re-litigate.
@@ -199,9 +352,115 @@ components:
 
   - id: c012
     name: Cashew Budget import — budgets table to a Cashew Budget doctype
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c014]
     wave: 1
+    built: >
+      Built 2026-08-07 (Quick).
+
+      SCHEMA VERIFIED, not assumed. The real backup at
+      `~/work-bench/cashew-2026-08-07-00-20-33-593933.sql` was read directly
+      before writing any code, so the `budgets` column list and both live rows
+      are observed fact rather than inference. All four C5 traps were confirmed
+      present in that data: `wallet_fks` is NULL on Food outdoor while the
+      scalar `wallet_fk` points at Petty Cash (reading the scalar would have
+      narrowed the budget to one account); `category_fks` on Savings is
+      `["32965a43-…","0"]`, where "0" is Balance Correction and is a plain
+      integer string; `start_date` 1753988400 is 2025-08-01 only in the site
+      timezone; and both budgets carry an Aug 2025 `end_date` while both are
+      live, with `archived = 0`.
+
+      READ PATH — `sqlite_reader.read_budgets(file_content) -> list[dict]`,
+      deliberately separate from `read_sqlite`. Budgets never become Cashew
+      Import Row records, so keeping them out of the row reader is what
+      guarantees the row pipeline cannot see them. Returns `[]` when the backup
+      has no `budgets` table (older export) rather than failing. The temp-file
+      read-only open was refactored out of `_fetch_rows` into
+      `_with_ro_connection` so both readers share it.
+
+      PK → NAME RESOLUTION HAPPENS IN THE READER, which is the contract c014
+      recorded: the mapping tables key on the Cashew NAME because the CSV export
+      carries no PKs, so names are the only identifier both ingestion paths
+      share. `_category_index` also handles Cashew's one level of nesting — a
+      category row with `main_category_pk` set is a SUB-category, and the mapping
+      table keys on (parent name, own name), so a flat pk→name lookup would file
+      every sub-category under a parent it does not have.
+
+      REOCCURRENCE — `_REOCCURRENCE_LABELS` maps 0..4 to
+      Custom/Daily/Weekly/Monthly/Yearly, the declaration order of Cashew's own
+      BudgetReoccurence enum. Still a FLAGGED ASSUMPTION (D3.d): every observed
+      row is a (3, 1) default stamp, so nothing in the data distinguishes the
+      values — but 3 = Monthly is consistent with both live budgets being
+      monthly. An unrecognised value raises BUDGET_REOCCURRENCE_UNKNOWN and the
+      whole budget import is abandoned for that run; it is never bucketed as
+      monthly. `Cashew Budget.validate` refuses the same values, so a
+      hand-edited document cannot reach the chart layer either.
+      `budget_transaction_filters` is not read, not stored, and takes no part in
+      matching (C5.5).
+
+      RESOLUTION + UPSERT — new `importer/budgets.py`. `resolve_scope` returns
+      `{accounts, excluded, wallets, unresolved}`; `import_budgets` upserts every
+      budget with an empty `unresolved` and reports the rest. Category lookup
+      mirrors the engine's fallback exactly — `(category, sub)` then
+      `(category, "")` — so a sub-category already covered by a category-only
+      mapping is not falsely reported as unmapped.
+
+      MAPPING GATE (Decision 6) is implemented as written: a budget with any
+      unresolved scope member is NOT imported, because budget actuals come from
+      GL Entry and an unmapped member is a hole that fails in the dangerous
+      direction. One deliberate refinement: an unresolved member of the EXCLUDE
+      list does not gate. Excluding something unmapped removes nothing from a
+      figure built only from mapped accounts, so treating it as a blocker would
+      refuse a budget over a member that cannot affect its number.
+
+      SCOPE IS MATERIALISED, NOT REFERENCED. An empty `category_fks` means ALL
+      categories and an empty `wallet_fks` means ALL wallets; both are expanded
+      at import time into concrete mapped accounts, because
+      `dashboard_series.budget_cycles` measures spend against an account list.
+      Consequence, accepted and documented: a category mapped AFTER a budget was
+      imported is not retroactively in scope until the next budget import —
+      which is what c015 exists for.
+
+      DOCTYPES — `Cashew Budget` (autoname `field:budget_pk`, so idempotency is
+      enforced by the primary key itself) plus three child tables:
+      `Cashew Budget Account` (the resolved category scope, and the table
+      `_load_budgets` reads), `Cashew Budget Exclude Category` (traceability
+      only), `Cashew Budget Wallet` (the funding-account narrowing). `disabled`
+      is set from Cashew's `archived` on every import, since archived is the real
+      inactive signal; a manual change to it is overwritten by the next import,
+      which the field description says out loud. `end_date` is deliberately not
+      a field.
+
+      HOST SEAM — `worker._import_budgets(run)`, called after the counters are
+      final and before diagnostics. Guarded on `source_type == "SQLite"`, wrapped
+      so no budget failure can move a counter, change the run status, or fail a
+      posted ledger import; rolls back and logs instead. Budgets skipped for an
+      unmapped scope are written to the Error Log as
+      "Cashew Budgets Not Imported (unmapped scope)". They have no SPA surface
+      yet — that is c015. Writes use `ignore_permissions=True`: the operator's
+      right to run the import is the authorisation, and a run should not
+      half-succeed because they hold read-only rights on a reference doctype.
+
+      BUG FOUND AND FIXED IN c002 — `dashboard_series._load_budgets` called
+      `frappe.get_all(..., parent="Cashew Budget")`, which raises `TypeError:
+      DatabaseQuery.execute() got an unexpected keyword argument 'parent'` on
+      v16 (the kwarg is `parent_doctype`). The branch was unreachable while the
+      doctype did not exist, so the FIRST real budget would have 500'd the entire
+      dashboard. Caught by the end-to-end smoke, not by any unit test.
+
+      VERIFICATION — 17 new tests in `tests/test_budgets.py`, and 83/83 across
+      test_budgets + test_dashboard_series + test_sqlite_import + test_resync +
+      test_unmapped. `bench --site work.local migrate` clean. Smoke-tested
+      against the REAL backup: both budgets read as Monthly, anchored
+      2025-08-01, with the integer-string PK "0" intact. Full chain exercised on
+      work.local — `_upsert` → `_load_budgets` → `budget_cycles` produced 3
+      correct monthly cycles for a Jun–Aug 2026 window, and flipping
+      `is_archived` removed the budget from the dashboard. NOT yet exercised
+      through a live import run end-to-end (work.local holds no Cashew Import
+      Runs), so `worker._import_budgets` itself is verified by inspection only.
+      `bench run-tests` remains broken bench-wide ("DocType Department Approver
+      not found"); tests were run through `bench console` with unittest's loader.
     notes: >
       Gate component for c009 and c013. Goals live in `budgets`, NOT `objectives`
       (D3.a-ter; re-confirmed on the fresh 2026-08-07 export, where objectives
@@ -275,9 +534,96 @@ components:
 
   - id: c014
     name: Inline unmapped-entity resolver in the SPA import surface
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: []
     wave: 1
+    built: >
+      Built 2026-08-07 (Quick).
+
+      New module `cashew_integration/importer/unmapped.py`:
+        - collect_unmapped(run) — scans the run's Cashew Import Rows and reports
+          every account and (category, sub_category) pair no ACTIVE mapping
+          resolves, each with row_count, up to 3 sample rows, and a proposal.
+          Accounts propose the modal source_currency and flag
+          currency_ambiguous when the rows disagree. Categories propose
+          Income/Expense from income_flag; Loan Out / Loan In are NEVER
+          proposed — the export cannot express that choice and a wrong guess
+          posts to the wrong side of the balance sheet.
+        - apply_resolutions(accounts, categories) — writes the child rows on
+          Cashew Settings. An entry whose key already exists is UPDATED and
+          reactivated rather than appended, because the Settings controller
+          rejects duplicate account names and duplicate (category, sub) pairs,
+          so appending over a previously deactivated row would fail the save
+          and strand the whole batch.
+
+      Two collector subtleties that were the point of the component:
+        - External Transfer partner accounts are extracted from the transfer
+          note via mapping._extract_partner_name. They appear in no column, so
+          a plain raw_account scan misses them, yet an unmapped partner blocks
+          the row (EXTERNAL_ACCOUNT_NOT_MAPPED) exactly as hard.
+        - Category detection mirrors the engine's (category, sub) then
+          (category, "") fallback, so a sub-category already covered by a
+          category-only mapping is NOT reported. Transfer / External Transfer /
+          Adjustment rows never consult a category mapping and are exempt.
+
+      api.py gained two whitelisted methods:
+        - unmapped_entities(run_name) — read-only aggregate (rule 4), also
+          returns company, can_write, and category_type_root_types.
+        - resolve_unmapped_entities(run_name, accounts, categories,
+          revalidate=True) — writes then calls validate_import, and returns the
+          REMAINING unmapped lists. Re-validating in the same action is
+          deliberate: validate_import already re-resolves both mapping tables
+          from scratch (Steps 0/0a), so it is what actually clears the
+          CASHEW_ACCOUNT_NOT_MAPPED / MAPPING_NOT_FOUND errors off the rows.
+          Splitting it would leave the panel reporting entities it just fixed.
+
+      PERMISSION DEVIATION FROM THE PLAN, deliberate: the plan said call
+      frappe.has_permission on "each mapping doctype". Cashew Account Mapping
+      and Cashew Category Mapping are CHILD tables of the Cashew Settings
+      single (istable: 1) and carry no DocPerms of their own — a has_permission
+      check against them is meaningless. The honest gate is
+      has_permission("Cashew Settings", "write"), which is what both methods
+      use; the read endpoint reports it as can_write so the panel degrades to a
+      read-only list plus a Desk link rather than a broken form.
+
+      KEYING NOTE FOR c012: the mapping tables key on the Cashew NAME
+      (cashew_account_name / cashew_category are Data fields), not on a Cashew
+      PK — the CSV export carries no PKs at all. c012 holds opaque PK strings
+      and MUST resolve them to names through the SQLite categories / wallets
+      tables before handing them to this module. Recorded in the module
+      docstring.
+
+      Validation is not re-implemented: the Cashew Category Mapping controller
+      enforces the account-class predicate (f006 c001/c008) on parent save, and
+      apply_resolutions lets that frappe.throw propagate. The SPA shows it
+      inline as well as toasting it, because the inline copy is what tells the
+      user which picker to change.
+
+      Frontend: `frontend/src/components/run-workspace/sections/
+      UnmappedResolverPanel.vue`, mounted at the top of RowsWorkbench when the
+      run is editable (Parsed / Validated), re-reading whenever the rows
+      reload. Account pickers are <LinkField> (SPA API discipline rule 2); the
+      category picker narrows by root_type from category_type_root_types, which
+      a test pins to validation._CATEGORY_TYPE_EXPECTATIONS so the picker can
+      never offer accounts the save will reject. That narrowing is a
+      convenience — the controller validate is the gate.
+
+      Vue trap avoided: drafts are seeded when a payload lands, never lazily
+      from the template. A draftFor(x) helper called during render mutates
+      reactive state that render reads, which re-triggers render.
+
+      NARROW AMENDMENT to f010's "configuration UX stays on Desk": covers only
+      mappings that BLOCK an in-progress import. The panel keeps a "Manage all
+      mappings on Desk" link and MappingsSection.vue is untouched.
+
+      VERIFIED: 11 unit tests green (tests/test_unmapped.py) and `yarn build`
+      clean. NOT verified end-to-end against a live run — the local work.local
+      site holds zero Cashew Import Runs, and the endpoints are not deployed to
+      erp.nstack.xyz, so the panel has not been exercised against real unmapped
+      data yet. `bench run-tests` remains broken bench-wide (DocType Department
+      Approver not found at test-site boot, reproduces on pre-existing
+      modules); tests were run through `bench console` with unittest's loader.
     notes: >
       Decision 6, user decision 2026-08-07. Gate for c012, and worth building
       before the Fix A backfill because ten months of unseen data will surface
@@ -315,9 +661,82 @@ components:
 
   - id: c015
     name: Budgets-only sync — pull budget/savings config from a backup without importing transactions
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c012, c014]
     wave: 1
+    built: >
+      Built 2026-08-07 (Quick).
+
+      ENDPOINT. `api.sync_budgets(file_url, company=None)`. Reads the uploaded
+      backup with c012's `read_budgets()`, upserts through c012's
+      `import_budgets()`, commits, and returns
+      {created, updated, unchanged, skipped, total, company} — counts for the
+      three outcomes, and the full skipped list with the unresolved scope members
+      that caused each. It never constructs a Cashew Import Run, never reads the
+      transactions table, and never enqueues anything, so it behaves identically
+      against a backup whose transactions are already imported and one that was
+      never imported at all.
+
+      PERMISSION GATE. `Cashew Settings` write plus `Cashew Budget` create plus
+      `Company` read on the target company. Cashew Settings write is the honest
+      gate for the scope resolution: budget scope is resolved entirely through
+      its mapping child tables, so anyone who may edit those already decides what
+      a budget resolves to. The write itself still runs ignore_permissions (c012's
+      rule — the operator's right to run the sync is the authorisation), which is
+      precisely why the gate has to be at the entry point.
+
+      OUTCOME CLASSIFICATION (new in this pass). `import_budgets` now returns
+      created / updated / unchanged alongside the existing imported / skipped.
+      `_upsert` snapshots the tracked scalars AND all three scope child tables
+      before and after applying the backup, and SKIPS THE SAVE ENTIRELY when
+      nothing moved. Two reasons: the action is meant to be re-run after editing
+      a budget in Cashew, so "2 budgets imported" every time answers nothing about
+      whether the edit landed; and a no-op save would put an edit in the document's
+      version trail that never happened. `source_run` is deliberately excluded from
+      the comparison — syncing from a second backup would otherwise report every
+      budget as changed when nothing about the budget moved.
+
+      SURFACE. `frontend/src/components/settings/BudgetsSection.vue`, in Settings
+      directly BELOW Mappings — the section that fixes a skipped budget sits above
+      the one that reports it. Reuses `CsvDropzone` with source-type SQLite (its
+      extension-over-MIME handling and mobile picker workarounds apply unchanged).
+      Reports created / updated / unchanged / total, and lists every skipped budget
+      with the specific account or category that blocked it, in words rather than
+      PKs. Deliberately NOT in the imports flow: a config sync appearing in the
+      import history would teach the user to distrust that history (the c015 note).
+
+      SKIPPED BUDGETS ARE REPORTED, NOT RESOLVED INLINE. c014's resolver panel is
+      bound to a run (`unmapped_entities(run_name)` reads that run's rows), so it
+      cannot be reused here without a second, run-free collector. This surface
+      names the blocking members and links to the mapping tables; re-running the
+      sync then picks the budget up. Never a dead end, but one more click than
+      c014's inline flow.
+
+      TESTS. `tests/test_budget_sync.py` — 7 sync tests (first sync creates; a
+      second sync of the same backup reports unchanged AND leaves `modified`
+      untouched; an edited amount reports updated; a scope-only change reports
+      updated, which a parent-fields-only comparison would have missed; archiving
+      in Cashew sets disabled; an unmapped scope is reported and not written) plus
+      3 invoice-KPI tests for c003.
+
+      TEST-HARNESS BUG FOUND AND FIXED IN THE TESTS: `frappe.db.delete("Cashew
+      Budget", ...)` leaves the scope child rows behind, and the next import loads
+      them back under the same name — the budget then holds every category twice
+      and every re-run reports a change that never happened. Cleanup goes through
+      `frappe.delete_doc(..., force=True)`. Worth knowing before writing any
+      further test that recreates a budget.
+
+      VERIFIED. 60/60 tests green across five modules; `bench build --app
+      cashew_integration` clean; end-to-end on work.local against the real backup
+      /home/riz/work-bench/cashew-2026-08-07-00-20-33-593933.sql through an actual
+      File doc — total 2, and BOTH budgets correctly gated (work.local carries no
+      Cashew category mappings), reporting exactly which category and wallet
+      blocked each. A second identical pass returned the same result with no
+      writes. NOT VERIFIED: a pass that actually creates a budget end-to-end
+      through the endpoint on a site with real mappings — the create/update/
+      unchanged paths themselves are covered by the unit tests against the live
+      doctype, but the live gate has never yet let a real Cashew budget through.
     notes: >
       User decision 2026-08-07. Transaction history is NOT backfilled, but
       budget/savings CONFIG is — the live site has months of transactions and
@@ -355,9 +774,48 @@ components:
 
   - id: c003
     name: KPI card row — total expense + invoice figures
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c002]
     wave: 2
+    built: >
+      Built 2026-08-07 (Quick).
+
+      BACKEND. `api._invoice_kpis(company, start, end)`, surfaced as
+      `dashboard_summary.invoices` = {sales, purchase}, each {count, amount}.
+      Counts and sums `base_grand_total` over SUBMITTED Sales / Purchase Invoices
+      whose posting_date falls in the period — D3.c as the user confirmed it:
+      volume and value POSTED, not outstanding AR/AP. Outstanding would read zero
+      on a site that is invoicing normally, because the importer's
+      auto_settle_cash defaults true, and a structurally-empty tile looks like a
+      broken tile rather than a fact.
+
+      A doctype the user cannot read reports None, not zero, and the SPA HIDES
+      that tile. A permission gap and a genuinely quiet period must not render
+      identically. Returns (credit notes) are included at their own negative
+      value rather than filtered, so the figure matches what the period booked.
+
+      FRONTEND. `BalanceTileGrid` gained `expense` and `invoices` props and now
+      renders the KPI tiles from the SAME `BalanceTile` component as the balance
+      tiles — no parallel card system, per the component note. `BalanceTile`
+      gained one `caption` prop for the volume line ("12 invoices posted"); a
+      second tile for a count would have been exactly the parallel system the
+      note rules out.
+
+      TOTALS COHERENCE (the c002 standing constraint). The Expenses tile takes
+      `expense_total`, the same clamped scalar the rest of the tile row uses, and
+      c004's trend chart deliberately shows NO period total of its own — so no
+      two totals from different sources ever sit side by side. Proven necessary
+      on work.local: for 2026-01-01..2026-08-07 the income scalar reads 164000
+      against a series total of 80000 (reversing postings net in the series and
+      clamp in the scalar); expense reconciles exactly at 29665.30.
+
+      VERIFIED. 3 unit tests in tests/test_budget_sync.py (both doctypes always
+      reported; an empty period is 0 not None; no read permission is None);
+      dashboard_summary smoked on work.local returning sales 4 / 80000 and
+      purchase 2 / 28250; frontend build clean. NOT VERIFIED: the rendered tile
+      row in a browser, and the hidden-tile path (work.local's Administrator can
+      read both invoice doctypes).
     notes: >
       Extends BalanceTile / BalanceTileGrid rather than adding a parallel card
       system. D3.c CONFIRMED BY USER: "invoice" = volume and value of Sales and
@@ -366,9 +824,50 @@ components:
 
   - id: c004
     name: Income vs Expense trend — stacked bars + net line
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002]
     wave: 2
+    built: >
+      Built 2026-08-07 (Quick).
+
+      The c001 ECharts donut was REWRITTEN IN PLACE into the trend chart
+      (`finance-dashboard/IncomeExpenseChart.vue`) rather than added beside it —
+      "the port collapses into this component", as the component note says. Two
+      totals in a ring said nothing the c003 KPI tiles do not now say better,
+      while the shape of the period was invisible.
+
+      Income is drawn above the axis and expense below on ONE stack so they meet
+      at zero, with net as a line over them. Expense is negated for placement
+      only: the y-axis formatter takes an absolute value and every tooltip
+      reports the positive figure the ledger holds. Reading the chart is then one
+      question — is the line above the axis.
+
+      Granularity follows c002's `series.granularity` (daily under 92 days,
+      monthly beyond), and the header names it. Daily ISO bucket keys are
+      reformatted to "1 Aug" for the axis and thinned with `hideOverlap` rather
+      than rotated into a comb; the net line drops its symbols past 40 buckets.
+
+      NO PERIOD TOTAL IN THE HEADER — the deliberate resolution of the c002
+      standing constraint. `series.totals` NETS reversing postings within a
+      bucket where the `income_total` / `expense_total` scalars behind the KPI
+      tiles clamp each GL row at zero, so the two legitimately differ; placing
+      one beside the other would present a reconciliation fact as a
+      contradiction. Instead, when they differ by more than a cent, a footnote
+      names both figures and why. On work.local for 2026-01-01..2026-08-07 that
+      footnote fires on income (charted 80000 against 164000 booked) and stays
+      silent on expense (29665.30 both ways) — which is exactly the intended
+      behaviour.
+
+      `CHROME` is now re-exported from charts/theme.js so a chart component never
+      imports the palette module directly (c001 Decision 1: the theme is the
+      single surface a chart talks to).
+
+      VERIFIED. Frontend build clean; the series contract and both totals read
+      back off the live dashboard_summary on work.local. NOT VERIFIED: the
+      rendered chart in a browser — no visual check of the stack meeting at zero,
+      the legend, or the daily axis thinning. Worth a look when c011 restructures
+      the layout.
     notes: >
       The ApexCharts IncomeExpenseChart port collapses into this component.
       Reads c002's `series` block, so bar granularity follows the period —
@@ -376,7 +875,8 @@ components:
 
   - id: c005
     name: Net worth / balance history chart
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002]
     wave: 2
     notes: >
@@ -384,12 +884,53 @@ components:
       posting opening balances; there are none to post. The curve genuinely goes
       deeply negative because the source data does — do not "fix" that in the
       chart, and make sure the y-axis handles a large negative gracefully.
+    built: |
+      2026-08-07. Backend + `frontend/src/components/finance-dashboard/NetWorthChart.vue`.
+      `dashboard_series._balance_series` became `_balance_blocks` and now scans Asset AND Liability in the same pair of queries (`BALANCE_ROOT_TYPES`), returning the existing `balances` list (Asset only — c010's contract is untouched) plus a new `series.net_worth` block: `{values[], assets[], liabilities[], opening, closing, has_liabilities}`. Net worth from assets alone is not net worth; it would read as wealth with a loan account sitting unmentioned beside it. Balances are carried in raw debit-credit form throughout, so assets count positive, liabilities negative, and the net figure is the plain sum; the liabilities line is negated on the way out so the tooltip can say "Owed".
+      `has_liabilities` is part of the response rather than something the chart infers from an all-zero line. With `auto_settle_cash` on, this ledger books straight to cash and carries no payables, and the tooltip suppresses the Owed row entirely in that case — a standing zero would invite the reader to wonder which debts were missed.
+      The chart is a single line, not a stack: the server has already done the netting. `yAxis` carries `scale: true` (without it ECharts anchors a value axis at zero and squashes a curve that never rises above a large negative into the top edge), a dashed `markLine` marks zero, and the area fill uses `origin: 0` so the tinted band under a negative curve is the shortfall itself. The empty test is `abs(v) > 0.005`, NOT `v > 0` — a negative curve is data, not emptiness. Decision 7 honoured: nothing clamps, and when the curve does dip below zero the card prints a line saying the imported ledger records spending without the opening balances that preceded it.
+      Verified: 4 new unit tests on the pure `_net_worth_block` pin the sign convention (a liability must REDUCE net worth — getting it backwards yields a curve that rises as debt grows, which looks plausible and is completely wrong), the no-liability case, opening-is-carried-in-not-first-bucket, and that a -447,850 balance passes through untouched. 62/62 green across test_dashboard_series, test_budget_sync, test_budgets, test_integrity, test_unmapped. `bench build --app cashew_integration` clean. Live on work.local: 2026-01-01..2026-08-07 net worth runs 655,439 opening to 340,310.98 closing and reconciles to the cent against the sum of the per-account closings.
+      NOT VERIFIED: no browser check. And work.local's net worth never goes negative in any period tried, so the negative-curve footnote and the `scale: true` axis behaviour have not been seen rendered — only the code path is reasoned. `test_mapping` carries 11 pre-existing failures on this bench (online rate lookup, category route); it imports nothing from dashboard_series and was already failing before this batch.
 
   - id: c006
     name: Expense treemap (flat category breakdown, hierarchy-ready contract)
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002]
     wave: 2
+    built: >
+      `frontend/src/components/finance-dashboard/ExpenseTreemapChart.vue`, drawn
+      through <CsChart> and reading `series.expense_by_category` — no backend
+      change was needed, c002 already ships the block with its own top-N and
+      (Other) fold, so the tile count is bounded at eleven by the server.
+
+      The hierarchy-ready contract of D3.b is honoured literally: `nodes` maps
+      each row to `{ name, value, children: [] }`. Every node is a leaf today
+      and ECharts treats an empty children array as one, so swapping the series
+      type to `sunburst` when Cashew sub-categories eventually arrive is a
+      change to this component and to nothing else.
+
+      THE DECISION THAT MATTERS — a treemap tile's meaning is its area, and
+      there is no area smaller than none. `expense_by_category` reports NET
+      movement per category, so a category whose refunds outweigh its spending
+      in the period arrives negative and cannot be drawn. Such categories are
+      filtered out of the tiles and named underneath the chart with their signed
+      figure, rather than disappearing from a breakdown the reader is reading as
+      complete. Zero-total categories take the same path.
+
+      Chrome: `roam`, `nodeClick` and the breadcrumb are all off — drilling and
+      zooming imply a depth this data does not have. Colours come from RAMP by
+      rank index; the tile gap is painted in CHROME.surface so tiles read as
+      separated rather than outlined. The header states the plotted total and
+      the tile count, both computed from the same filtered node list the chart
+      draws, so the number above the chart can never disagree with it.
+
+      NOT VERIFIED. No browser check. On work.local the period 2026-01-01..
+      2026-08-07 yields exactly 2 categories totalling 29,665.30, reconciling to
+      the cent against `series.totals.expense`, and no category nets negative —
+      so the excluded-categories footnote has never rendered on real data, and
+      neither has the (Other) fold or the label-truncation behaviour on a
+      crowded treemap.
     notes: >
       D3.b RESOLVED — treemap, NOT sunburst. f011's scan found sub_category_fk
       unused across every row, so the category dimension is flat today and a
@@ -400,9 +941,48 @@ components:
 
   - id: c007
     name: Calendar heatmap — daily spend density
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002]
     wave: 2
+    built: >
+      `frontend/src/components/finance-dashboard/SpendHeatmapChart.vue`, fed the
+      `daily_spend` array straight from `dashboard_summary` — the one dashboard
+      chart that does not take the `series` object, because daily_spend is
+      always daily and must not follow the 92-day granularity switch.
+
+      One `calendar` plus one `series` per year in view, grouped in the client
+      off the ISO date prefix. Each calendar's `range` is clipped to the days
+      actually present in that year rather than the whole calendar year, so a
+      one-month period draws a one-month grid instead of eleven empty months.
+      Height is computed from the number of years so a period spanning a year
+      boundary is not squeezed into a single block's worth of space.
+
+      THE SCALE IS CAPPED AT A PERCENTILE, NOT THE MAXIMUM (the note's warning,
+      proven in the demo). `cap` is the 94th percentile of days that carried
+      spending — zero days are excluded from the ranking, since on a normal
+      period they are most of the grid and would drag the cap to near nothing.
+      Days above the cap share the darkest shade. Both facts are stated in the
+      footnote, with the count of capped days and the actual peak, so the
+      compression is visible rather than something the reader has to infer.
+
+      Two exclusions from the colour scale, both stated in words underneath:
+      days netting to zero are emitted as ECharts' '-' no-data marker so an
+      empty cell means "nothing happened" rather than "a little happened", and
+      days whose refunds outweigh their spending are uncolourable on a scale
+      starting at zero, so they are also left empty and reported as a count plus
+      a total refunded figure.
+
+      The ramp is the live accent (single-series chart, Decision 4) built with
+      alpha() — a CSS color-mix() here would have rendered the entire grid black
+      without warning.
+
+      NOT VERIFIED. No browser check. work.local carries only 10 spending days
+      across 2026 (219-day window, 209 zero days, 0 refund days, p94 cap 4,806.0
+      equal to the peak), so on real data: the above-cap branch has never
+      rendered, the refund branch has never rendered, and the multi-year layout
+      has never been exercised. The 2026-07-01..2026-08-07 window has no expense
+      at all and correctly falls through to the empty state.
     notes: >
       Reads c002's `daily_spend` block, which is always daily regardless of
       period length. One `calendar` + one `series` entry per year in view.
@@ -411,7 +991,8 @@ components:
 
   - id: c008
     name: Sankey money flow — income sources to accounts to expense categories
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002]
     wave: 2
     notes: >
@@ -420,10 +1001,20 @@ components:
       Its former worst exposure — all 20 USD Transfer rows carrying
       base_amount = 0 — is FIXED by f013 c002, which now stamps exchange_rate
       and base_amount onto both transfer legs.
+    built: |
+
+      2026-08-07. Backend `cashew_integration/dashboard_series.py` -> `money_flow()` (+ the pure helpers `_flow_pairs` and `_fold_flow_nodes`), wired into `api.dashboard_summary` as the additive `money_flow` key; frontend `frontend/src/components/finance-dashboard/MoneyFlowSankey.vue`. `charts/echarts.js` already registered SankeyChart, so no engine change.
+      HOW A LINK IS DERIVED, which is the whole component. A GL Entry records its account and its side but not its counterpart, so there is no such thing as a "flow row" to query. The pairing is done per voucher: every account in the voucher is netted, the ones left in credit are the sources of the money, the ones left in debit are its uses, and each source is joined to each use in proportion. On a two-legged voucher — what the importer writes for an ordinary transaction — that split is exact. On a voucher with several funding legs AND several uses it is an ALLOCATION and the ledger genuinely does not record the pairing, so those vouchers are COUNTED (`allocated_vouchers`) and the count is printed under the chart. A diagram that cannot distinguish what it observed from what it inferred is the failure this avoids.
+      WHAT IS NOT DRAWN, AND WHY IT IS STATED IN FIGURES. Only Income->Asset and Asset->Expense links are kept, which is what makes the graph acyclic BY CONSTRUCTION rather than by a cycle-breaking pass afterwards. Transfers between two asset accounts would be an arrow inside a single column; loans, opening balances and equity legs belong to neither end of this story. Both are accumulated and returned as `excluded.transfers` / `excluded.other` and reported in the footnote, because on this ledger the excluded amount is LARGER than the drawn flow (1,017,343.12 excluded against 109,665.18 drawn for 2026-01-01..2026-08-07) and a reader comparing the sankey to the tiles above it would otherwise conclude the chart is broken.
+      REFUNDS ARE NETTED, NOT REVERSED. A refund credits the expense and debits the account, the reverse of a drawable link; a sankey arrow means "money moved this way" and a negative one cannot be drawn. It is subtracted from the forward link between the same two accounts, and a pair that nets to zero or below drops out of the diagram into the excluded figure. Live proof: Income->Asset gross is 164,000 with an 84,000 reversal against it, and the chart draws 80,000.
+      Node names are made unique across the WHOLE graph, not per column: ECharts keys sankey links by name, so one account label appearing in two layers would silently merge into a single node and create exactly the cycle the layer rule exists to prevent. A label claimed by two layers is suffixed with its layer. Each layer folds its tail past TOP_N_FLOW_NODES (8) into its own "(Other income)" / "(Other accounts)" / "(Other categories)" node — a sankey has to fit a column of labels inside a card. A middle-column node reports `throughput` (in PLUS out), named that way so it can never be read as the account's balance; the tooltip says "In and out".
+      Verified: 8 new unit tests in `tests/test_dashboard_series.py` (TestMoneyFlowPairing, TestMoneyFlowNodes) covering the exact-pair case, transfer exclusion, liability exclusion, refund netting, proportional split + the allocation flag, the one-sided voucher, cross-layer name disambiguation, the per-layer fold and the throughput key. Live on work.local both granularities; every drawn link asserted to be a legal layer transition. `bench build` clean.
+      NOT VERIFIED: no browser check. This ledger yields a 6-node / 3-link diagram, so the per-layer (Other) fold, the cross-layer name collision and a tall column have never rendered on real data — all three are covered by unit tests only.
 
   - id: c009
     name: Savings goal — gauge or per-cycle series, switching on the filter
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002, c012]
     wave: 2
     notes: >
@@ -442,10 +1033,21 @@ components:
       nothing was saved is a missed target, not missing data.
       Live shape: "Savings", 50,000/cycle, categories Savings + Balance
       Correction, wallet Saving.
+    built: |
+
+      2026-08-07. `frontend/src/components/finance-dashboard/SavingsGoalCard.vue` plus the shared `frontend/src/utils/budget.js`. Backend change was one line of contract: `budget_cycles` now emits `is_income` per budget (and `_load_budgets` fetches it). That flag is the ONLY thing separating a savings goal from a spending limit, and the client must never infer it from the sign of the spend.
+      D3.d implemented as written: the FILTER chooses the treatment. More than one cycle in view gets a bar per cycle against a dashed target markLine; one cycle or less gets the gauge. Cycle length is the budget's own reoccurrence + period_length off the server's grid, never assumed monthly.
+      THE TARGET IS NEVER PRO-RATED. A monthly goal seen through half a month shows the full target and marks the cycle unfinished — a pro-rated figure is a number nobody set. Unfinished cycles are drawn at 0.45 opacity and explained in a footnote, since a half-elapsed month drawn solid reads as a settled miss.
+      OVER-ACHIEVEMENT IS SHOWN, NOT CLIPPED: the gauge's axis extends to `max(100, ceil(percent/10)*10)`, so beating a goal by half looks different from just reaching it. The dial prints the percentage and, underneath, the two amounts it came from. A cycle with no matching transactions is a zero, not a gap.
+      Colour: accent while short of the target, SEMANTIC.income once met — the exact inverse of c013, which sits beside it. Both cards use "left"/"over" wording rather than a bare percentage so the shared full-bar shape cannot teach two opposite meanings.
+      The card renders NOTHING (no header, no empty state) when there is no income budget or the target is zero: a dial reading zero out of zero is not information. `pages/FinanceDashboard.vue` drops the whole "Goals and limits" section when neither card would render.
+      Verified: work.local carries NO Cashew Budget rows at all, so the block was exercised by seeding two budgets ("SMOKE Savings" income, 50,000/month; "SMOKE Food outdoor" limit, 10,000/month), reading `budget_cycles` back at three filters, and deleting them again (`remaining budgets: []`). That confirmed `is_income` passthrough, 8 cycles for a Jan-Aug filter, 1 cycle for a single month, and `partial: True` for a filter ending mid-cycle. `bench build` clean.
+      NOT VERIFIED: no browser check, and the gauge has therefore never actually rendered. The seeded budgets confirm the DATA shape only — the ECharts gauge geometry, the graphic text under the dial and the bar/gauge switch are unproven visually.
 
   - id: c010
     name: Account balance stacked area — one band per cash account over time
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002]
     wave: 2
     notes: >
@@ -453,10 +1055,19 @@ components:
       if the optional backfill runs, an Investment band at roughly -447,850.
       Both are what the source says. Design the band treatment to survive a
       large negative rather than assuming all-positive stacking.
+    built: |
+      2026-08-07. `frontend/src/components/finance-dashboard/AccountBalanceChart.vue`, drawing `series.balances` (Asset accounts, top 10 by absolute closing plus a folded "(Other)") — no backend change needed beyond c005's refactor.
+      THE STACKING DECISION, which is the whole component. A stacked area only means something when every band is positive: the top edge is then the total and each band's thickness is that account's share. Mix a large negative in and neither statement holds — ECharts stacks negatives onto their own baseline, the top edge stops being the total, and a reader measuring band thickness is measuring nothing. So the chart switches mode: all-positive draws stacked areas; any account dipping below zero anywhere in the window drops the WHOLE chart to unstacked lines, and the subheading says which mode is in force and why. Silently keeping the stack was the failure that mattered here — it looks correct and is not.
+      `yAxis` gets `scale: true` only in line mode; a stack read against a floating baseline would misstate every band's share.
+      The tooltip re-sorts accounts by their value AT THE HOVERED BUCKET rather than by series order — on a ten-band chart the reader is asking who is largest here — and prints the total underneath. Band translucency goes through `alpha()`; zrender cannot parse a CSS `color-mix()` and renders it black without warning (c001).
+      Live on work.local this renders in LINE mode: Investment closes at exactly -447,850 as the component note predicted, alongside Accumulated Depreciation -28,813.30 and Petty Cash -13,747.72. Both charts are wired into `pages/FinanceDashboard.vue` as a two-column balance-sheet pair below the income/expense row; c011 owns the final layout.
+      Verified: `bench build --app cashew_integration` clean; the balances contract exercised live at both granularities (8 monthly buckets and 38 daily).
+      NOT VERIFIED: no browser check, so the legend scroll behaviour with 10+ bands and the line-mode readability are unconfirmed. The STACKED path has never run on real data — every period tried on work.local contains a negative account, so only the line branch has been exercised end to end.
 
   - id: c013
     name: Budget vs actual — spending limits (income=0 budgets)
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c001, c002, c012]
     wave: 2
     notes: >
@@ -470,10 +1081,19 @@ components:
       ALL wallets (C5.1 — not Petty Cash; the earlier record was wrong).
       Real data makes this immediately useful — actuals against a 10,000 limit
       run 22,110 / 32,689 / 32,355 / 36,146, blown roughly 3x every month.
+    built: |
+
+      2026-08-07. `frontend/src/components/finance-dashboard/BudgetVsActualCard.vue`, sharing `utils/budget.js` and the same `is_income` split with c009.
+      THE COLOUR TREATMENT INVERTS, which is the point of keeping this separate from c009: passing a savings goal is good and turns green there, passing a spending limit is the failure the limit exists to catch and turns the expense hue here. The two cards sit side by side, so both label their figure "over" or "left" instead of showing a bare percentage — a full bar must not mean success on the left of the screen and failure on the right.
+      Same filter rule as c009 (D3.d). Several cycles get a bar each with a dashed limit markLine; ONE cycle gets a plain DOM progress bar rather than a one-bar chart, because an axis, a grid and a tooltip wrapped around a single value is chrome to look past. That bar is scaled against the LIMIT, not against the spend: an overshoot fills it and the amount over is written beside it, where a bar rescaled to fit its own overshoot would look identical whether it went over by ten or ten thousand.
+      A cycle with no matching spending is a zero, not a gap — an untouched month is a month under the limit and worth seeing. Unfinished cycles are faded and footnoted; "blown the limit" is counted over FINISHED cycles only.
+      Verified: same seeded-budget smoke as c009 (the limit budget returned 8 cycles for Jan-Aug, 1 for March, `partial: True` for a mid-cycle filter, with spend clipped to the visible part of the cycle — which is exactly what the footnote claims). `bench build` clean.
+      NOT VERIFIED: no browser check. The live component note's expected shape ("Food outdoor" 10,000/cycle blown roughly 3x every month) could NOT be reproduced — work.local carries no Cashew Budget rows, so no real budget has ever reached this component; the over-limit colour branch has only been driven by seeded data through the server, never rendered.
 
   - id: c011
     name: Dashboard layout restructure + mobile degradation
-    stage: not-started
+    stage: done
+    status_history: [not-started, working, done]
     depends_on: [c003, c004, c005, c006, c007, c008, c009, c010, c013]
     wave: 3
     notes: >
@@ -554,3 +1174,12 @@ test_requirements:
     tree-shaken ECharts import and the total absence of ApexCharts.
     Data check: the two live budgets should reproduce the figures in c009/c013
     notes above once imported.
+    built: |
+
+      2026-08-07. `frontend/src/pages/FinanceDashboard.vue` restructured, plus one responsive fix in `SpendHeatmapChart.vue`.
+      SECTIONS, NOT ONE SCROLL. Eight charts in an undifferentiated column all look equally important and give the reader no way in. The page is now four named sections — Trends, Where it went, Goals and limits, Holdings and imports — in the order the questions actually arrive: what do I have (the tiles, which keep the page header as their heading), how did it move, where did it go, am I inside my own targets. Each heading carries a one-line subtitle so a reader can skip a section without decoding its charts first.
+      The sankey is full width and alone: it carries three columns of labels and is the only chart here that is unreadable at half the page. Everything else stays in `grid lg:grid-cols-2`, which is ONE column below the lg breakpoint (f010 D2.c) — no row depends on its neighbour being beside it rather than above it, so the phone layout is the same content in one readable column and not a shrunken desktop grid.
+      The "Goals and limits" section is dropped in its entirety — heading and all — when Cashew carries no usable budget, using the same `selectBudgets` filter the two cards use internally. A section title over two blank cards reads as a surface that failed to load.
+      Mobile fix carried into c007: the calendar's `cellSize` is now `['auto', CELL]`. A fixed 14px cell across six months runs off the canvas on a phone and the last weeks simply vanish; a non-square cell is a cosmetic loss where a missing week is a factual one, so the grid gives up squareness to keep every day on screen. Row height stays fixed so the seven-day week never collapses.
+      Verified: `bench build --app cashew_integration` clean.
+      NOT VERIFIED, AND THIS IS THE MAIN GAP: no browser check at any width. The section rhythm, the sankey's height at full width, the calendar's auto cell and the one-column phone degradation have all been reasoned about and none have been seen. The approved demo remains the layout reference and this arrangement has not been compared against it.

@@ -93,16 +93,20 @@ ThemeController from `Cashew Settings.accent_color`). Reference them as
 `var(--cs-accent)` or the `cs.accent` Tailwind color. Never hardcode the indigo
 hex in a component.
 
-**Charts are the one narrow exception (amended 2026-08-07, f012 Decision 4).**
-Multi-series and categorical charts need 8–10 distinct hues, which cannot be
-derived from a single accent without producing muddy or low-contrast adjacent
-categories. Charts therefore draw from a **curated categorical ramp defined in
-exactly one module**, consumed by the shared `<CsChart>` wrapper. That ramp is
-the only sanctioned non-accent colour source in the SPA; no chart, no component,
-and no page may hardcode a hex outside it. The accent remains the primary and
-emphasis colour — single-series charts, highlights, selection, hover. Income,
-expense, and transfer carry fixed semantic colours that must not change hue
-between charts.
+**Charts amendment (f012 Decision 4, 2026-08-07).** Multi-series and categorical
+charts need 8–10 distinct hues, which cannot be derived from a single accent
+without producing muddy or low-contrast adjacent categories. Charts may
+therefore use the curated
+categorical ramp and the semantic income/expense/transfer colours defined in
+`frontend/src/charts/palette.js`. That module is the *only* sanctioned
+non-accent colour source in the SPA: the ramp lives in exactly one file, and no
+chart or component may hardcode a hex outside it. The accent still governs
+single-series charts, emphasis, selection and hover — and the ramp does **not**
+retint when the user picks a non-indigo accent. Two traps: zrender does not
+understand CSS `color-mix()`, so build every translucent chart fill with the
+module's `alpha()` / `alphaToken()` helpers or it renders black silently; and
+the ramp's dark column recorded in the f012 decisions is a forward asset, not a
+deliverable — the SPA has no dark mode.
 
 ## 7. Density & spacing
 

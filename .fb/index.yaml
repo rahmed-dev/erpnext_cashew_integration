@@ -56,3 +56,18 @@ features:
     name: Cashew SQL (SQLite) Import
     status: done
     stage: done
+  - id: f012
+    slug: dashboard-analytics
+    name: Dashboard Analytics & Charts
+    status: in-progress
+    stage: dev-in-progress
+  - id: f013
+    slug: import-integrity
+    name: Import Integrity (drift detection, FX correctness)
+    status: done
+    stage: done
+  - id: f014
+    slug: live-deployment
+    name: Live Deployment & Ledger Corrections (erp.nstack.xyz)
+    status: ready-for-dev
+    stage: ready-for-dev
