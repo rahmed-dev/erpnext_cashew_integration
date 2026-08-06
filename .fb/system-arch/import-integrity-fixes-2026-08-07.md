@@ -157,8 +157,69 @@ the assertions were executed directly against the site in the meantime, 9/9:
 
 `bench migrate` clean on `work.local`, all three patches recorded.
 
+## Live pre-flight (read-only, 2026-08-07)
+
+Run against `erp.nstack.xyz` over REST before deploying anything. No writes.
+Script: `scratchpad/live_verify.py` (not committed — it reads credentials).
+
+Permission sanity per the CLAUDE.md rule: 12 runs, 718 Journal Entries, 2,237 GL
+Entries, 68 transfer rows — none of the lists are silently empty.
+
+**Scope of the repost on live: exactly one entry**, the same one as `work.local`.
+`ACC-JV-2026-00275`, 2026-05-14, 4.50 USD, booked 4.50 PKR (implied rate 1.0).
+No other foreign same-currency transfer exists, and none are already at a real
+rate, so nothing else is a candidate.
+
+**Balance impact.** Every account-currency balance is untouched — the defect and
+its repair live entirely in the company-currency column, and the replacement JE
+balances the same way the original did. Only two PKR figures move, both toward
+Cashew: Elevate Pay -1,238.85 → +10.38, and NSave's PKR side drops by the same
+1,249.23 it was overstated by. That reproduces `work.local` exactly.
+
+Balances at the last imported day (2026-07-30), live vs Cashew:
+
+| Wallet → account | Cashew | ERP (account cur) | ERP (PKR) |
+|---|---:|---:|---:|
+| Saving → Saving | 454,695.00 | 454,695.00 | 454,695.00 |
+| Emergency Fund → Meezan Bank | 181,181.41 | 181,181.41 | 181,181.41 |
+| World First → World First | 160.00 | 160.00 | 44,645.24 |
+| Elevate Pay → Elevate Pay | 0.00 | 0.00 | **-1,238.85** |
+| NSave → NSave | 4,026.86 | **4,044.86** | 1,127,907.79 |
+| Petty Cash → Petty Cash | 0.07 | **-1,323.93** | -1,323.93 |
+
+### Blocker: the rate is not stored, so the result is not deterministic
+
+Live holds exactly **one** Currency Exchange record — 2026-07-04 USD→PKR 277.0.
+`_query_currency_exchange_table` only looks *backwards* from the posting date, so
+for 2026-05-14 it finds nothing, the inverse lookup finds nothing, and
+`_lookup_erp_rate` falls through to `_lookup_online_rate`. The posted rate would
+then depend on the live server's outbound network and a 6-hour cache rather than
+on stored data — and if egress is blocked the script prints SKIP and writes
+nothing at all.
+
+Fix before running it: create the Currency Exchange record the repost should use.
+
+```
+Currency Exchange: date 2026-05-14, USD → PKR, rate 278.60766133
+```
+
+That is the rate `work.local` resolved and posted at, so pinning it makes live
+byte-identical rather than merely similar. With it in place the lookup never
+reaches the network.
+
+### Two gaps that are not ours
+
+Both predate this work and neither is touched by any fix here.
+
+- **NSave, 18.00 USD.** Localised to a single day: 2026-05-30/31, where Cashew
+  says 813.00 and `ACC-JV-2026-00625` books 831.00. That entry carries no
+  `run:` remark, so it is a manual Journal Entry, not an import — and 813→831
+  is a digit transposition. Every other NSave day reconciles once the UTC
+  date_created / posting_date off-by-one is netted out.
+- **Petty Cash, 1,324.00 PKR.** Still unexplained; see above.
+
 ## Deploying to erp.nstack.xyz
 
 Not done. `bench update --pull --apps cashew_integration`, then `bench --site
-erp.nstack.xyz migrate` runs the three backfill patches, then the repost script
-above once the affected list has been reviewed.
+erp.nstack.xyz migrate` runs the three backfill patches, then create the Currency
+Exchange record above, then the repost script.
