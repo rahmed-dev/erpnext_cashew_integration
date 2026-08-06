@@ -54,3 +54,13 @@ features:
     status: done
     stage: done
     priority: high
+  - id: f012
+    name: Dashboard Analytics & Charts
+    status: in-progress
+    stage: arch-done
+    priority: high
+  - id: f013
+    name: Import Integrity (drift detection, FX correctness, opening balances)
+    status: done
+    stage: done
+    priority: high

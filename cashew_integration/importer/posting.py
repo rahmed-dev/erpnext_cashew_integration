@@ -130,18 +130,42 @@ def post_transfer_pair(source_row: dict, dest_row: dict, run) -> tuple[str, str]
     multi_curr    = 1 if (src_cur != cmp_cur or dst_cur != cmp_cur) else 0
 
     if src_cur == dst_cur:
-        # same-currency: simple 1:1, base == account-currency amount.
-        # Assumes at least one leg is in company currency (the f001 spec scope).
-        # If both legs are foreign (e.g. USD→USD, company PKR) base amounts
-        # would be wrong; guard this path before extending to that scenario.
-        src_exr   = 1.0
-        dst_exr   = 1.0
-        src_base  = src_amount
-        dst_base  = dst_amount
+        if src_cur == cmp_cur:
+            # Both legs already in company currency — 1:1 is genuinely correct.
+            src_exr   = 1.0
+            dst_exr   = 1.0
+            src_base  = src_amount
+            dst_base  = dst_amount
+        else:
+            # Both legs foreign and identical (e.g. USD→USD, company PKR).
+            # No counter-leg to imply a rate from, so the company-currency rate
+            # must come from ERP. Falling back to 1.0 here silently books a USD
+            # amount into a PKR column and leaves a permanent phantom balance.
+            from cashew_integration.importer.mapping import _lookup_erp_rate
+            rate = _lookup_erp_rate(src_cur, cmp_cur, source_row["txn_date"])
+            if not rate:
+                _mark_transfer_pair_rate_missing(
+                    source_row, dest_row, src_cur, cmp_cur, source_row["txn_date"]
+                )
+                return "", ""
+            src_exr   = rate
+            dst_exr   = rate
+            src_base  = round(src_amount * rate, 2)
+            dst_base  = round(dst_amount * rate, 2)
     else:
         src_exr, dst_exr, src_base, dst_base = _compute_implied_rates(
             src_cur, dst_cur, cmp_cur, src_amount, dst_amount, source_row["txn_date"]
         )
+
+    # Stamp the derived rate and company-currency amount back onto both legs so
+    # the row record is self-describing. apply_exchange_rates() deliberately skips
+    # Transfer rows (the rate only exists once both legs are known), which left
+    # every transfer row reporting exchange_rate=0 / base_amount=0 to anything
+    # reading the child table instead of the GL.
+    source_row["exchange_rate"] = src_exr
+    source_row["base_amount"]   = src_base
+    dest_row["exchange_rate"]   = dst_exr
+    dest_row["base_amount"]     = dst_base
 
     imbalance = abs(dst_base - src_base)
     tolerance = flt(run.je_rounding_tolerance or 0.01)
@@ -223,6 +247,16 @@ def _mark_transfer_pair_imbalance(source_row, dest_row, imbalance, tolerance):
     )
     for r in (source_row, dest_row):
         set_row_validation_error(r, "TRANSFER_JV_IMBALANCE", msg)
+
+
+def _mark_transfer_pair_rate_missing(source_row, dest_row, from_cur, to_cur, date):
+    msg = (
+        f"Both legs of this transfer are in {from_cur} and the company reports in "
+        f"{to_cur}, so no rate can be implied from the pair. Create a Currency "
+        f"Exchange record for {from_cur}→{to_cur} on {date} and re-run."
+    )
+    for r in (source_row, dest_row):
+        set_row_validation_error(r, "TRANSFER_RATE_UNAVAILABLE", msg)
 
 
 def _extract_transfer_labels(note: str, source_fallback: str, dest_fallback: str) -> tuple[str, str]:

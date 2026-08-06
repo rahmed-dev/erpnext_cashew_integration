@@ -333,7 +333,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Revert Status",
-   "options": "\nReverted\nRevert-Failed",
+   "options": "\nReverted\nRevert-Failed\nCancelled Externally\nDeleted Externally",
    "read_only": 1
   },
   {

@@ -1,0 +1,111 @@
+id: f013
+name: Import Integrity (drift detection, FX correctness, opening balances)
+status: done
+stage: done
+owner: bmad-fb-quick
+status_history: [done]
+
+goal: >
+  Close the six defects found by the 2026-08-07 REST reconciliation of the live
+  site against its Cashew Import Runs, and give the app the ability to re-read
+  its own work so the same class of defect surfaces on its own next time.
+
+context: >
+  Four of the six findings share one root: the importer was write-once. It
+  stamped posted_docname on a row and never looked at that document again, and it
+  computed derived values (exchange rate, base amount) without writing them back.
+  Nothing in the app could tell the difference between what it claimed and what
+  the ledger said — a Journal Entry cancelled in Desk left the run reporting
+  itself clean.
+
+findings_ref: ../../system-arch/import-integrity-2026-08-07.md
+fixes_ref: ../../system-arch/import-integrity-fixes-2026-08-07.md
+
+components:
+  - id: c001
+    name: Reconciliation engine (live doc_events + on-demand sweep + daily scheduler)
+    stage: done
+    depends_on: []
+    build_notes: >
+      New importer/reconcile.py. on_document_cancelled / on_document_trashed wired to
+      Journal Entry doc_events in hooks.py stamp the owning row "Cancelled Externally" /
+      "Deleted Externally" the moment it happens; frappe.flags.cashew_reverting (set in
+      worker.process_revert) keeps the app's own cancels from being misreported.
+      reconcile_run() is a read-only sweep for missing/cancelled/draft/date-drifted docs,
+      orphaned documents no row claims, and counter drift — exposed as
+      api.reconcile_run_integrity. reconcile_all_runs() runs daily via scheduler_events.
+      rows_posted is exempt from drift on a reverted run WITH rows (lifetime counter),
+      but not on one with no rows — that is the phantom-duplicate signature.
+  - id: c002
+    name: Same-currency foreign transfer FX + rate stamping
+    stage: done
+    depends_on: []
+    build_notes: >
+      posting.post_transfer_pair: the src_cur == dst_cur branch now splits. Company
+      currency keeps the 1:1 shortcut; same FOREIGN currency looks the rate up via
+      _lookup_erp_rate and errors the pair TRANSFER_RATE_UNAVAILABLE when none exists,
+      instead of booking a USD amount into a PKR column. Also stamps exchange_rate and
+      base_amount onto both legs before the balance check — mapping.apply_exchange_rates
+      skips Transfer rows on purpose and nothing was writing the derived rate back.
+      Live impact: Elevate Pay - CS was exactly 0.00 USD and -1,238.85 PKR, all of it
+      from ACC-JV-2026-00275 booking 4.50 USD as 4.50 PKR.
+  - id: c003
+    name: Import Run cannot inherit another run's history
+    stage: done
+    depends_on: []
+    build_notes: >
+      no_copy on status, all five counters, period_start/end, queued_job_id, started_on,
+      finished_on, diagnostics_file, import_rows. Plus CashewImportRun.validate() forcing
+      a run with no creation timestamp to Draft with zeroed counters. Guard tests
+      self.get("creation") NOT is_new() — is_new() reads __islocal, which is only set on
+      the insert path and is None for a doc built from a dict, the exact shape a duplicate
+      arrives in. Written with is_new() first, it silently did nothing; the test caught it.
+      Root cause of CASHEW-IMPORT-2026-000004, which reported started_on/finished_on
+      identical to run 000003 to the microsecond and earlier than its own creation.
+  - id: c004
+    name: Opening balance audit + Opening Entry poster (capability kept; NOT needed for this company)
+    stage: done
+    depends_on: []
+    build_notes: >
+      New importer/opening.py. audit_opening_balances() walks every leaf Cash/Bank account
+      and reports the lowest point its running balance reaches; anything below zero is
+      missing at least that much opening balance. post_opening_entry() writes the one-time
+      ERPNext Opening Entry and refuses a foreign-currency account supplied without a rate.
+      APIs: opening_balance_audit, post_opening_balances. WITHDRAWN as a fix: the full
+      Cashew SQLite export shows Petty Cash opened at 0.28 on 2026-03-04 and ERPNext
+      already holds exactly that, and every other imported wallet opened at zero. The
+      "impossible for physical cash" argument was wrong because Cashew's OWN running
+      balance for Petty Cash reaches -117,357.72 on 2026-01-01. Module stays as a
+      general capability with nothing to post here.
+  - id: c005
+    name: Backfill patches
+    stage: done
+    depends_on: [c001, c002, c003]
+    build_notes: >
+      patches/v1_0: flag_externally_cancelled_rows, resync_run_counters,
+      backfill_transfer_row_rates. All data-only, no GL writes. Verified on work.local
+      (same import history): row 7 of run 000001 flagged Cancelled Externally against
+      ACC-JV-2026-00042 and nothing else; run 000004 counters and timestamps cleared;
+      0 transfer rows left at exchange_rate 0, recovered rates 276.53-277.00 PKR/USD.
+      GL correction is deliberately NOT a patch — scripts/repost_same_currency_transfers.py
+      is an explicit bench execute with dry run by default.
+
+verification: >
+  The work.local test runner cannot start (DocType Department Approver not found — an
+  HRMS leftover that fails identically on untouched modules). tests/test_integrity.py is
+  written for when it is repaired; the assertions were executed directly against the site
+  in the meantime, 9/9 pass. bench migrate clean, all three patches in Patch Log,
+  repost script dry run correctly identifies exactly one affected entry.
+
+reconciliation_vs_cashew: >
+  Against cashew-2026-08-07-00-20-33-593933.sql at 2026-07-30 (last imported day):
+  Saving 454,695.00 and Emergency Fund->Meezan Bank 181,181.41 match to the cent;
+  NSave 4,026.86 USD vs 1,127,907.79 PKR implies ~280.1 PKR/USD, consistent;
+  Elevate Pay 0.00 USD vs -1,238.85 PKR is the c002 FX defect; Petty Cash 0.07 vs
+  -1,323.93 leaves a gap of exactly 1,324.00 PKR, unexplained.
+
+open:
+  - Petty Cash: 1,324.00 PKR gap vs Cashew, cause not identified.
+  - ACC-JV-2026-00042 recommended to stay cancelled — restoring it moves ERPNext AWAY
+    from Cashew. Now flagged Cancelled Externally so it reads as a decision.
+  - Not deployed to erp.nstack.xyz.

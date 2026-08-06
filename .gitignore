@@ -60,3 +60,7 @@ cashew_integration/public/node_modules
 
 # WSL / Windows alternate-data-stream tracking artifacts
 *:Zone.Identifier
+
+# Local API credentials — never commit
+.secrets/
+*.env

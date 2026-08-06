@@ -262,6 +262,28 @@ after_install = "cashew_integration.install.after_install"
 fixtures = []
 
 
+# Document Events
+# ---------------
+# A Journal Entry the importer created can be cancelled or deleted in Desk,
+# outside the app's revert flow. Without these the owning Cashew Import Row goes
+# on reporting itself as posted and the run's own statistics call it clean.
+doc_events = {
+	"Journal Entry": {
+		"on_cancel": "cashew_integration.importer.reconcile.on_document_cancelled",
+		"on_trash": "cashew_integration.importer.reconcile.on_document_trashed",
+	},
+}
+
+
+# Scheduled Tasks
+# ---------------
+scheduler_events = {
+	"daily": [
+		"cashew_integration.importer.reconcile.reconcile_all_runs",
+	],
+}
+
+
 # PWA: /cashew/sw.js + /cashew/manifest.webmanifest take precedence over
 # the SPA catch-all. SW needs to live inside the SPA scope; manifest is
 # served dynamically so theme_color tracks Cashew Settings.accent_color.

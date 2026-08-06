@@ -93,6 +93,17 @@ ThemeController from `Cashew Settings.accent_color`). Reference them as
 `var(--cs-accent)` or the `cs.accent` Tailwind color. Never hardcode the indigo
 hex in a component.
 
+**Charts are the one narrow exception (amended 2026-08-07, f012 Decision 4).**
+Multi-series and categorical charts need 8–10 distinct hues, which cannot be
+derived from a single accent without producing muddy or low-contrast adjacent
+categories. Charts therefore draw from a **curated categorical ramp defined in
+exactly one module**, consumed by the shared `<CsChart>` wrapper. That ramp is
+the only sanctioned non-accent colour source in the SPA; no chart, no component,
+and no page may hardcode a hex outside it. The accent remains the primary and
+emphasis colour — single-series charts, highlights, selection, hover. Income,
+expense, and transfer carry fixed semantic colours that must not change hue
+between charts.
+
 ## 7. Density & spacing
 
 - Section gaps: `space-y-3` / `space-y-4`. Card padding: `p-3` (compact rows) to

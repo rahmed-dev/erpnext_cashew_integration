@@ -91,7 +91,8 @@
    "in_list_view": 1,
    "label": "Status",
    "options": "Draft\nParsed\nValidated\nQueued\nProcessing\nCompleted\nFailed\nCancelled\nReverting\nReverted\nRevert-Failed",
-   "reqd": 1
+   "reqd": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "default_customer",
@@ -128,43 +129,50 @@
    "fieldname": "rows_total",
    "fieldtype": "Int",
    "label": "Total Rows",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "rows_valid",
    "fieldtype": "Int",
    "label": "Valid Rows",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "rows_posted",
    "fieldtype": "Int",
    "label": "Posted Rows",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "rows_failed",
    "fieldtype": "Int",
    "label": "Failed Rows",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "rows_skipped",
    "fieldtype": "Int",
    "label": "Skipped (Duplicate) Rows",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "period_start",
    "fieldtype": "Date",
    "label": "Period Start",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "period_end",
    "fieldtype": "Date",
    "label": "Period End",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "column_break_17",
@@ -174,25 +182,29 @@
    "fieldname": "queued_job_id",
    "fieldtype": "Data",
    "label": "Queued Job ID",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "started_on",
    "fieldtype": "Datetime",
    "label": "Started On",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "finished_on",
    "fieldtype": "Datetime",
    "label": "Finished On",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "fieldname": "diagnostics_file",
    "fieldtype": "Attach",
    "label": "Diagnostics CSV",
-   "read_only": 1
+   "read_only": 1,
+   "no_copy": 1
   },
   {
    "collapsible": 1,
@@ -216,7 +228,8 @@
    "fieldname": "import_rows",
    "fieldtype": "Table",
    "label": "Import Rows",
-   "options": "Cashew Import Row"
+   "options": "Cashew Import Row",
+   "no_copy": 1
   }
  ],
  "links": [],

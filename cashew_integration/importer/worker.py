@@ -249,6 +249,9 @@ def process_revert(run_name: str) -> None:
     Revert worker.  Called by the RQ worker process.
     Cancels every posted SI/PI/JE recorded on the run's rows.
     """
+    # Marks our own cancels so the Journal Entry doc_events (c-reconcile) don't
+    # misreport them as external cancellations.
+    frappe.flags.cashew_reverting = run_name
     try:
         _revert(run_name)
     except Exception:
@@ -259,6 +262,8 @@ def process_revert(run_name: str) -> None:
         frappe.db.commit()
         emit_run_progress(run_name, {"status": "Revert-Failed", "finished_on": str(run.finished_on)})
         raise
+    finally:
+        frappe.flags.cashew_reverting = None
 
 
 def _revert(run_name: str) -> None:

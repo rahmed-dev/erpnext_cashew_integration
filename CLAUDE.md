@@ -12,6 +12,45 @@ This app is managed under the BMad Frappe Builder pipeline. Authoritative state:
 
 Always check `.fb/` before making architectural assumptions.
 
+## Live-site REST access (for debugging / verifying imports)
+
+The production site is **`https://erp.nstack.xyz`**. API credentials for user
+`ai@nstackhq.com` live at **`.secrets/erp-api.env`** (mode 600), gitignored via the
+`.secrets/` rule in `.gitignore`. A mirror copy is at `~/.config/nstack/erp-api.env`.
+Format: `ERP_URL`, `ERP_API_KEY`, `ERP_API_SECRET`.
+
+Use it to verify what an import actually posted — read the Journal Entries and GL
+Entries back and reconcile them against `Cashew Import Run` / `Cashew Import Row`,
+rather than trusting the run's own counters.
+
+```
+Authorization: token <ERP_API_KEY>:<ERP_API_SECRET>
+```
+
+Three things that will waste time otherwise:
+
+1. **Cloudflare blocks Python's `urllib`** on this host with `error 1010` (403,
+   fingerprint-based) regardless of a valid token. Shell out to `curl` instead — same
+   request, same headers, works.
+2. **The request line caps at 4094 bytes** (gunicorn). A `["name", "in", [...]]` filter
+   with a few hundred document names exceeds it and returns an HTML `Bad Request` page,
+   not JSON. Chunk `in` filters to ~40 values per call.
+3. **`frappe.client.get_list` returns `[]` on a permission failure**, not an error — an
+   empty result silently reads as "clean". Sanity-check with
+   `frappe.client.get_count` on each doctype before concluding anything from an
+   empty list.
+
+Child tables need `parent` and `parenttype` in the `get_list` params:
+`{doctype: "Cashew Import Row", parent: "Cashew Import Run",
+parenttype: "Cashew Import Run", filters: [["parent", "=", run]]}`.
+
+**Never commit these values, never echo them into a file inside the repo other than
+`.secrets/`, and never paste them into a commit message, log, or issue.** The repo has
+a live GitHub remote — a `git add -f` would publish them.
+
+Standing findings from the 2026-08-07 verification pass:
+**`.fb/system-arch/import-integrity-2026-08-07.md`**.
+
 ## SPA API discipline (introduced for f010, applies to all future SPA work)
 
 The Vue SPA (`/cashew`, see `f010-cashew-frontend-spa`) follows a hybrid API model that

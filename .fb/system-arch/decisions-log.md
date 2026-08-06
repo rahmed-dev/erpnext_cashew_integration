@@ -121,6 +121,118 @@ reusing the entire posting pipeline; keeps CSV as fallback and enables cross-sou
 BLOCKED on the actual `.sql` file for the schema→field mapping (esp. whether the transfer
 note string is stored or exporter-synthesized).
 
+## Charting Engine — Apache ECharts — 2026-08-07 (f012)
+**Decision:** The SPA's charting engine is **Apache ECharts** (via `vue-echarts`),
+replacing ApexCharts. `apexcharts` / `vue3-apexcharts` are removed once the existing
+`IncomeExpenseChart.vue` is ported; two engines must not ship simultaneously past the port.
+All charts go through one shared `<CsChart>` wrapper (theme, palette, currency and tooltip
+formatting, empty/loading state, resize); tree-shaken `echarts/core` imports only, never the
+full bundle — the SPA is PWA-precached, so payload is a real cost.
+**Rationale:** user asked for a standout analytics UI. ECharts' financial-analytics chart
+types (calendar heatmap, sankey, sunburst, gauge) have no ApexCharts equivalent of comparable
+quality, and paying the port cost once beats carrying two engines.
+**Supersedes:** f010 Decision 9's steer "no Apache ECharts unless TD has a strong reason".
+The reason is now recorded at architecture level, not deferred to TD.
+**Detail:** `features/f012-dashboard-analytics/arch/decisions.md` → Decision 1.
+
+## Dashboard Time-Series Aggregates — 2026-08-07 (f012)
+**Decision:** `api.dashboard_summary` is extended with period-bucketed time-series —
+monthly (and daily for short periods) income/expense, per-category series over time, and
+account balance history — additively, keeping every existing key's name and meaning.
+Bucketing is site-timezone aware (same tz discipline as f011 c001) and computed with grouped
+SQL, not a per-bucket loop. Rule 4 of the SPA API discipline still binds: one aggregate
+endpoint per surface, `ignore_permissions=False` internally, `has_permission` gates at entry.
+Chart-slice drill-down into transaction lists remains **out of scope** (as in f010 D9).
+**Rationale:** trend, calendar-heatmap, flow, and period-over-period charts are impossible
+against the current single-period response shape. This is the half of the work that raises
+the ceiling; the engine swap is the other half.
+**Detail:** `features/f012-dashboard-analytics/arch/decisions.md` → Decision 2.
+
+## Chart Colour — Curated Categorical Ramp — 2026-08-07 (f012)
+**Decision:** Multi-series and categorical charts use one curated, contrast-checked
+categorical ramp (~8–10 hues) defined in a single module and consumed by `<CsChart>`.
+The Cashew accent stays the primary/emphasis colour (single-series charts, highlights,
+selection, hover). Income / expense / transfer carry fixed semantic colours that do not
+change hue between charts.
+**Rationale:** deriving 8+ hues from one accent by rotation or lightness reliably yields
+muddy or contrast-failing adjacent categories — precisely the "looks cheap" outcome f012
+exists to fix. A curated ramp is predictable and testable.
+**Amends** `design-philosophy.md` point 6 (accent-only colour): charts are the one narrow
+exception, and the ramp module is the only sanctioned non-accent colour source.
+**Detail:** `features/f012-dashboard-analytics/arch/decisions.md` → Decision 4.
+
+## SQLite Becomes the Default Import Path — 2026-08-07 (f011 p004)
+**Decision:** `Cashew Import Run.source_type` defaults to **SQLite**, not CSV. The SPA
+upload surface opens on the SQLite toggle, and the dropzone's default accept list is
+`.sql / .sqlite / .db`. **CSV is retained as a fully supported option** — this flips the
+default, it does not remove a path.
+**Rationale:** the SQLite backup is Cashew's own source of truth and demonstrably the better
+import. The CSV export is a derived, flattened view that has already caused a real incident
+(the balance mismatch f011 was built to fix — CSV silently omitted rows). The SQL reader also
+carries data the CSV has no column for at all: FK-authoritative transfer pairing
+(`paired_transaction_fk`), stable `transaction_pk`/`budget_pk` UUIDs, and the `budgets` and
+`objectives` tables. Defaulting to the weaker format invited the omission bug every time.
+**Consequences:**
+- `source_type` field `default` flips CSV → SQLite; existing runs are unaffected because the
+  value is stored per run.
+- The `import_from_date` / `import_to_date` window fields — `depends_on
+  source_type=='SQLite'` — are now visible by default. A blank window still means the whole
+  backup, so the default behaviour is unchanged.
+- SPA `UploadSection.vue` segmented toggle and `CsvDropzone.vue` accept list default to the
+  SQL path (f011 c005).
+- Goals and spending limits (f012 c012 / c013) exist only on the SQL path, so this makes
+  them reachable by default rather than opt-in.
+- Docs and the setup wizard should describe SQL as the normal path and CSV as the fallback.
+**Detail:** `features/f011-cashew-sql-import/feature.yaml` → patch p004.
+
+### f012 Goals live in `budgets`, not `objectives` — 2026-08-07
+Scanning the real 2026-07-04 export settled where Cashew keeps the user's goals: the
+**`budgets`** table, not `objectives`. Two live rows — **Savings 50,000/month** (`income=1`,
+wallet `Saving`, categories Savings + Balance Correction) and **Food outdoor 10,000/month**
+(`income=0`, wallet `Petty Cash`, category Entertainment), both pinned, unarchived, monthly
+(`reoccurrence=3`, `period_length=1`). `objectives` holds only two zero-amount **loan**
+trackers and `transactions.objective_fk` is non-null on zero rows.
+**Decision:** import `budgets` into a new `Cashew Budget` doctype keyed on `budget_pk`;
+the `income` flag selects the treatment — `1` is a savings goal (gauge), `0` is a spending
+limit (budget-vs-actual, new component c013, inverted colour semantics since exceeding a
+limit is bad). Matching = category_fks ∩ wallet_fks ∩ direction, both resolved through the
+EXISTING Category and Account Mappings, so no new config surface.
+**TRAP:** both live budgets carry an `end_date` in Aug 2025. `start_date` is the recurrence
+anchor and `end_date` ends the FIRST period only — deriving the window from `end_date` marks
+every recurring budget expired. Use `start_date` + reoccurrence; `archived` is the real
+inactive signal.
+**Unblocks** the goal work that D3.a-bis had parked pending a fresh export.
+**Detail:** `features/f012-dashboard-analytics/arch/decisions.md` → D3.a-ter.
+
+### f012 Budget cycle + rendering rule — 2026-08-07 (D3.d)
+**Decision:** the budget's own row is authoritative for its period — store `reoccurrence`
+and `period_length`, map `{0 custom, 1 daily, 2 weekly, 3 monthly, 4 yearly}` × period_length,
+and derive every window from `start_date` + those. No period setting in ERPNext.
+**Rendering follows the filter:** more than one cycle in the selected period → per-cycle marks
+against the limit line (savings = per-cycle series, spending limit = per-cycle bars coloured
+over/under); one cycle or less → gauge for savings, single bar for a limit. Never pro-rate —
+a pro-rated recurring budget is a number that exists nowhere in Cashew.
+**UNVERIFIED, flagged:** the 2026-07-04 export cannot validate the enum. Every transaction and
+both budgets carry the identical `reoccurrence=3, period_length=1`, including one-off paid
+rows, so `3/1` is Cashew's default stamp, not evidence. **An unrecognised value must RAISE at
+import, never silently fall back to monthly** — a wrong cycle misstates every budget figure.
+**Knock-on:** cycle bucketing uses the budget's own anchor and cycle, not the dashboard's
+month buckets (a weekly budget over a 3-month filter yields ~13 marks), so c002's time-series
+needs daily granularity as the floor. A partial trailing cycle is shown and marked partial.
+**Detail:** `features/f012-dashboard-analytics/arch/decisions.md` → D3.d.
+
+### f012 Follow-ups — RESOLVED — 2026-08-07
+- **Savings gauge = goal, not rate.** New DocType field `Cashew Settings.savings_target_amount`
+  (Currency, per-month, no default). The gauge plots `income − expense` against it, pro-rated by
+  months in the selected period, and hides entirely when the target is unset. Chosen over a
+  percentage savings-rate because an amount is concrete and checkable; a rate moves with income.
+- **Expense breakdown = treemap, not sunburst.** f011's scan found `sub_category_fk` unused on
+  every row, so the category dimension is flat and a sunburst would degenerate into the donut the
+  dashboard already shows. Data contract stays hierarchy-ready (optional `children`) so the swap
+  is later a one-component change.
+- **Invoice KPI card** = volume and value of SI/PI posted in the period, not outstanding AR/AP
+  (`auto_settle_cash` defaults true, so open AR/AP is empty by construction).
+
 ### f011 Schema Scan — RESOLVED — 2026-07-04
 Scanned the real Cashew SQLite file (Drift schema v48, 553 txns). Plan §5 is dev-ready.
 Key parity rules locked: currency `.upper()` (DB lowercase vs CSV uppercase); epoch→site-tz

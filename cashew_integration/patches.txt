@@ -4,3 +4,6 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+cashew_integration.patches.v1_0.flag_externally_cancelled_rows
+cashew_integration.patches.v1_0.resync_run_counters
+cashew_integration.patches.v1_0.backfill_transfer_row_rates

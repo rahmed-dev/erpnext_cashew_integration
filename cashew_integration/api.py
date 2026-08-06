@@ -12,6 +12,8 @@ Endpoints:
   setup_from_csv(company, file_url) — seed Cashew Settings from a Cashew CSV export
 """
 
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import cint, flt, now
@@ -1313,3 +1315,63 @@ def get_import_row_field_guide() -> list[dict]:
     frappe.has_permission("Cashew Import Run", "read", throw=True)
     from cashew_integration.importer.field_guide import build_field_guide
     return build_field_guide()
+
+
+# ── integrity: reconciliation + opening balances ───────────────────────────────
+
+@frappe.whitelist()
+def reconcile_run_integrity(run_name: str) -> dict:
+    """Re-read every document this run claims and report drift. Read-only.
+
+    Catches what the run's own counters cannot: a Journal Entry cancelled or
+    deleted in Desk after the import, a document the importer created but never
+    recorded, and counters that disagree with the child table.
+    """
+    run = frappe.get_doc("Cashew Import Run", run_name)
+    frappe.has_permission("Cashew Import Run", doc=run, throw=True)
+
+    from cashew_integration.importer.reconcile import reconcile_run
+    return reconcile_run(run_name)
+
+
+@frappe.whitelist()
+def opening_balance_audit(company: str) -> dict:
+    """Report which cash/bank accounts are missing an opening balance. Read-only.
+
+    ``suggested_minimum_opening`` is a lower bound derived from the lowest point
+    the running balance reaches — the real opening figure is whatever was
+    actually held and must be supplied by the user.
+    """
+    frappe.has_permission("Cashew Import Run", "read", throw=True)
+
+    from cashew_integration.importer.opening import (
+        audit_opening_balances, suggested_opening_date,
+    )
+    return {
+        "company": company,
+        "suggested_posting_date": suggested_opening_date(company),
+        "accounts": audit_opening_balances(company),
+    }
+
+
+@frappe.whitelist()
+def post_opening_balances(
+    company: str,
+    posting_date: str,
+    balances,
+    opening_account: str | None = None,
+) -> dict:
+    """Post the one-time Opening Entry for *company*.
+
+    ``balances`` is a JSON array of ``{"account", "amount", "exchange_rate"}``
+    with ``amount`` in each account's own currency.
+    """
+    frappe.has_permission("Cashew Import Run", "write", throw=True)
+
+    if isinstance(balances, str):
+        balances = json.loads(balances)
+
+    from cashew_integration.importer.opening import post_opening_entry
+    name = post_opening_entry(company, posting_date, balances, opening_account)
+    frappe.db.commit()
+    return {"status": "ok", "journal_entry": name}
