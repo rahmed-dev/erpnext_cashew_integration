@@ -89,6 +89,66 @@ first_browser_pass_2026_08_07: >
   Same shape as the fiscal-year bug (a server-owned value supplied and ignored),
   lower impact on a single-timezone deployment.
 
+granularity_control_2026_08_07: >
+  Second browser pass, same day. Selecting "This Fiscal Year" still produced a
+  DAILY chart covering five weeks, and the user asked for a control so the
+  behaviour is consistent across every chart.
+
+  ROOT CAUSE, and it was the previous fix's own doing. The fiscal-year preset
+  capped its range end at today, reasoning that future months cannot hold data.
+  But the period the reader picked is the year: clipping it made the preset mean
+  "the few weeks since the year opened", which is a short period, which the
+  automatic granularity rule then correctly bucketed as days. Both ends now come
+  from the site's Fiscal Year record. Empty trailing buckets are honest; a
+  silently shortened period is not.
+
+  BUCKET WIDTH IS NOW EXPLICIT. `dashboard_series.resolve_granularity(start,
+  end, requested)` is the single decision point: it takes the surface's request,
+  settles ONE width for the whole period, and returns {granularity, requested,
+  auto, capped}. `dashboard_summary` takes a `granularity` argument and passes
+  it through; every series block is bucketed on the settled width, so no two
+  charts on the page can disagree about what a point represents. Weekly
+  (Monday-anchored, matching the heatmap's firstDay) and yearly are new widths.
+  Buckets clip to the period at every width, so no bucket can report money from
+  outside the range the reader asked for.
+
+  The automatic ladder went from two rungs to three: <=92 days daily, <=366 days
+  monthly, beyond that yearly. 366 rather than 365 so a fiscal year containing a
+  leap day is still a year. WEEKLY IS NEVER AUTOMATIC — every span it would suit
+  is already better served by a neighbour (92 days of days reads fine, a year of
+  months beats a year of 53 weeks), so it is offered rather than imposed. The
+  accepted cost: a 13-month custom range lands on two coarse yearly buckets, in
+  exchange for a rule that states in one sentence.
+
+  An explicit request exceeding MAX_BUCKETS (400) is widened one step at a time
+  and the control reports "widened" — a picker naming one width above a chart
+  drawn at another is worse than no picker. An unrecognised width falls back to
+  automatic rather than raising: a stale query parameter must not take the
+  dashboard down.
+
+  CLIENT. New `frontend/src/utils/granularity.js` holds the whole vocabulary —
+  option list, subtitle adjective, axis tick and tooltip label. Each chart had
+  carried its own `isDaily` ternary, which was two-valued by accident rather
+  than design; a third width would have had every chart quietly render a week as
+  a month with nothing to catch it. New `GranularitySelector.vue` sits beside
+  the period picker and labels itself from what was DRAWN, not what was asked.
+  The spending calendar deliberately does NOT follow the control (a calendar
+  with a cell per month is not a calendar) and now says so when the dashboard is
+  set wider, rather than appearing to ignore it.
+
+  Tiles compacted a second time on user request: figure 26px to 18px, padding,
+  label, icon and delta chip all reduced, and the strip goes to seven columns at
+  xl so it is one row rather than two. The figure steps DOWN at xl on purpose —
+  seven columns inside a container capped at 1280px makes each tile narrower
+  there than at lg.
+
+  VERIFIED: 42 dashboard tests pass (30 before), covering the three-rung ladder
+  across five named periods, weekly and yearly bucketing and clipping, the leap
+  year boundary, the widening cap and the unknown-width fallback; the frontend
+  builds clean; the fiscal year resolves to 365/53/12/2 buckets at the four
+  widths against work.local. NOT verified in a browser — no surface added or
+  changed here has been rendered.
+
 build_mode: >
   Quick dev (user direction 2026-08-07) — no TD/UI/Review handoffs; one agent
   plays every role, same pattern as f010 and f011. Architecture is closed: the
