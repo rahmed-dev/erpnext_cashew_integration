@@ -98,7 +98,7 @@ function subOf(it) {
     :is="clickable ? 'button' : 'div'"
     :type="clickable ? 'button' : undefined"
     :class="[
-      'rounded-lg border border-gray-200 bg-white p-3 text-left w-full block',
+      'rounded-lg border border-gray-200 bg-white p-2 text-left w-full block',
       clickable && !loading
         ? 'cursor-pointer hover:border-[var(--cs-accent)] hover:shadow-sm transition'
         : '',
@@ -112,22 +112,22 @@ function subOf(it) {
          a full line of height per tile, and with seven tiles that was most of
          the first screen spent on chrome rather than figures — worst on a phone,
          where the tiles stack two-up and the rows multiply. -->
-    <div class="flex items-center gap-1.5 min-w-0">
-      <span class="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded bg-[var(--cs-accent-50)] text-[var(--cs-accent)]">
-        <component :is="icon" :size="12" />
+    <div class="flex items-center gap-1 min-w-0">
+      <span class="shrink-0 inline-flex items-center justify-center w-4 h-4 rounded bg-[var(--cs-accent-50)] text-[var(--cs-accent)]">
+        <component :is="icon" :size="10" />
       </span>
-      <span class="text-[11px] text-gray-500 uppercase tracking-wide truncate min-w-0">{{ label }}</span>
-      <span class="ml-auto shrink-0 flex items-center gap-1">
+      <span class="text-[10px] text-gray-500 uppercase tracking-wide truncate min-w-0">{{ label }}</span>
+      <span class="ml-auto shrink-0 flex items-center gap-0.5">
         <DeltaChip v-if="!loading && prior != null" :current="amount" :prior="prior" :invert="invert" />
-        <ChevronRight v-if="clickable && !loading" :size="14" class="text-gray-400" />
+        <ChevronRight v-if="clickable && !loading" :size="12" class="text-gray-400" />
       </span>
     </div>
-    <SkeletonBlock v-if="loading" class="h-6 mt-1.5 w-2/3" />
-    <div v-else class="mt-1">
+    <SkeletonBlock v-if="loading" class="h-4 mt-1 w-2/3" />
+    <div v-else class="mt-0.5">
       <AmountDisplay :amount="amount" :currency="currency" big />
       <!-- The caption is the tile's only optional row, so it carries no top
            margin of its own — a tile without one must not reserve the space. -->
-      <div v-if="caption" class="text-[11px] text-gray-500">{{ caption }}</div>
+      <div v-if="caption" class="text-[10px] text-gray-500 leading-tight">{{ caption }}</div>
     </div>
 
     <Teleport to="body">

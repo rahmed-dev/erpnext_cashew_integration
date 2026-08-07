@@ -18,6 +18,9 @@ import {
   SEMANTIC, CHROME, alpha, accent,
   moneyAxis, categoryAxis, moneyFormatters, tooltipRow, tooltipTitle,
 } from '@/charts/theme';
+import {
+  granularityAdjective, bucketAxisLabel, bucketTooltipLabel,
+} from '@/utils/granularity';
 
 const props = defineProps({
   // `dashboard_summary.series` — needs `buckets` and `net_worth`.
@@ -28,7 +31,9 @@ const props = defineProps({
 const buckets = computed(() => props.series?.buckets || []);
 const block = computed(() => props.series?.net_worth || null);
 const values = computed(() => block.value?.values || []);
-const isDaily = computed(() => props.series?.granularity === 'daily');
+// One width for the whole dashboard, chosen by the granularity control and
+// resolved server-side. See `@/utils/granularity`.
+const grain = computed(() => granularityAdjective(props.series));
 
 // A net worth of exactly zero across every bucket means no balance-sheet account
 // has ever been posted to — that is the empty state. A negative curve is DATA,
@@ -42,13 +47,8 @@ const closing = computed(() => block.value?.closing ?? 0);
 const change = computed(() => closing.value - opening.value);
 const goesNegative = computed(() => values.value.some((v) => (v || 0) < -0.005));
 
-/** ISO dates are unreadable stacked on a daily axis; months already read fine. */
 function axisLabel(bucket) {
-  if (!isDaily.value) return bucket.label;
-  const d = new Date(`${bucket.key}T00:00:00`);
-  return Number.isNaN(d.getTime())
-    ? bucket.label
-    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return bucketAxisLabel(bucket, props.series);
 }
 
 const option = computed(() => {
@@ -68,7 +68,7 @@ const option = computed(() => {
         const i = params[0].dataIndex;
         const b = rows[i] || {};
         const net = values.value[i] || 0;
-        const rowsOut = [tooltipTitle(b.label || b.key || '')];
+        const rowsOut = [tooltipTitle(bucketTooltipLabel(b, props.series))];
         rowsOut.push(tooltipRow(dot(CHROME.textMuted), 'Assets', money(assets[i] || 0)));
         // The liabilities row is suppressed when the ledger has none at all
         // rather than printed as a zero: a standing zero invites the reader to
@@ -128,7 +128,7 @@ function dot(color) {
       <div>
         <h3 class="text-sm font-semibold text-gray-900">Net worth</h3>
         <p class="text-xs text-gray-500">
-          {{ isDaily ? 'Daily' : 'Monthly' }} closing balance, assets less liabilities
+          {{ grain }} closing balance, assets less liabilities
         </p>
       </div>
       <div v-if="hasData" class="text-right shrink-0">

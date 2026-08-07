@@ -937,8 +937,16 @@ def dashboard_summary(
     period_start: str | None = None,
     period_end: str | None = None,
     company: str | None = None,
+    granularity: str | None = None,
 ) -> dict:
-    """Headline numbers for the SPA landing dashboard for a (period, company)."""
+    """Headline numbers for the SPA landing dashboard for a (period, company).
+
+    `granularity` is the bucket width the surface is asking the time series for
+    — "daily", "weekly", "monthly", "yearly", or "auto"/omitted to let the
+    server pick from the period length. It is a request, not a command: see
+    `dashboard_series.resolve_granularity` for when it is widened, and the
+    `granularity_*` keys the series returns so the control can say so.
+    """
     if not period_start or not period_end:
         frappe.throw(_("period_start and period_end are required"))
     if not company:
@@ -981,7 +989,9 @@ def dashboard_summary(
         "recent_runs": recent_runs,
         "invoices": _invoice_kpis(company, period_start, period_end),
         "daily_spend": dashboard_series.daily_spend(company, period_start, period_end),
-        "series": dashboard_series.period_series(company, period_start, period_end),
+        "series": dashboard_series.period_series(
+            company, period_start, period_end, granularity
+        ),
         "budget_cycles": dashboard_series.budget_cycles(company, period_start, period_end),
         # f012 c008 — sankey money flow. Additive like the blocks above.
         "money_flow": dashboard_series.money_flow(company, period_start, period_end),

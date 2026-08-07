@@ -72,8 +72,11 @@ const kpiTiles = computed(() => {
 
 <template>
   <!-- Two-up on a phone, not one. A tile is one label and one number; stacked
-       one per row, seven of them pushed every chart below the fold. -->
-  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
+       one per row, seven of them pushed every chart below the fold.
+       At xl the whole strip is ONE row: the tiles are narrow enough now that
+       seven fit, and one row of tiles above the charts is the shape this
+       section was always meant to have. Below that they wrap. -->
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2">
     <BalanceTile
       v-for="t in BALANCE_TILES"
       :key="t.id"

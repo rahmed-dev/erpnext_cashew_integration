@@ -14,6 +14,8 @@ from frappe.tests.utils import FrappeTestCase
 from cashew_integration.api import _top_n_with_other
 from cashew_integration.dashboard_series import (
     DAILY_GRANULARITY_MAX_DAYS,
+    GRANULARITIES,
+    MAX_BUCKETS,
     OTHER_LABEL,
     TOP_N_FLOW_NODES,
     TOP_N_SERIES,
@@ -31,11 +33,17 @@ from cashew_integration.dashboard_series import (
 class TestGranularity(FrappeTestCase):
     def test_switch_is_inclusive_of_both_endpoints(self):
         # 2026-01-01 .. 2026-04-02 is exactly 92 days counting both ends.
-        self.assertEqual(resolve_granularity("2026-01-01", "2026-04-02"), "daily")
-        self.assertEqual(resolve_granularity("2026-01-01", "2026-04-03"), "monthly")
+        self.assertEqual(
+            resolve_granularity("2026-01-01", "2026-04-02")["granularity"], "daily"
+        )
+        self.assertEqual(
+            resolve_granularity("2026-01-01", "2026-04-03")["granularity"], "monthly"
+        )
 
     def test_single_day_period_is_one_daily_bucket(self):
-        self.assertEqual(resolve_granularity("2026-03-05", "2026-03-05"), "daily")
+        self.assertEqual(
+            resolve_granularity("2026-03-05", "2026-03-05")["granularity"], "daily"
+        )
         buckets = build_buckets("2026-03-05", "2026-03-05", "daily")
         self.assertEqual(len(buckets), 1)
         self.assertEqual(buckets[0]["key"], "2026-03-05")
@@ -43,6 +51,117 @@ class TestGranularity(FrappeTestCase):
     def test_daily_bucket_count_matches_span(self):
         buckets = build_buckets("2026-01-01", "2026-04-02", "daily")
         self.assertEqual(len(buckets), DAILY_GRANULARITY_MAX_DAYS)
+
+    def test_the_automatic_ladder_matches_how_the_period_is_named(self):
+        """A month reads as days, a year as months, several years as years —
+        which is how a reader describes the period they picked."""
+        cases = [
+            ("one month", "2026-07-01", "2026-07-31", "daily"),
+            ("one quarter", "2026-07-01", "2026-09-30", "daily"),
+            ("one fiscal year", "2026-07-01", "2027-06-30", "monthly"),
+            ("two fiscal years", "2026-07-01", "2028-06-30", "yearly"),
+            ("five years", "2021-01-01", "2025-12-31", "yearly"),
+        ]
+        for name, start, end, expected in cases:
+            with self.subTest(period=name):
+                self.assertEqual(
+                    resolve_granularity(start, end)["granularity"], expected
+                )
+
+    def test_a_leap_fiscal_year_is_still_a_year(self):
+        """2027-07-01 .. 2028-06-30 contains 2028-02-29, so it is 366 days. The
+        threshold has to admit it or a leap year silently reads as multi-year."""
+        self.assertEqual(
+            resolve_granularity("2027-07-01", "2028-06-30")["granularity"], "monthly"
+        )
+        # One day longer is genuinely more than a year.
+        self.assertEqual(
+            resolve_granularity("2027-07-01", "2028-07-01")["granularity"], "yearly"
+        )
+
+
+class TestExplicitGranularity(FrappeTestCase):
+    """The dashboard's granularity control. The width the reader picks must win
+    over the automatic one, and when it cannot, they must be told."""
+
+    def test_an_explicit_width_overrides_the_automatic_one(self):
+        # 38 days would resolve to daily on its own.
+        choice = resolve_granularity("2026-07-01", "2026-08-07", "monthly")
+        self.assertEqual(choice["granularity"], "monthly")
+        self.assertFalse(choice["auto"])
+        self.assertFalse(choice["capped"])
+
+    def test_a_year_can_be_asked_for_daily(self):
+        choice = resolve_granularity("2026-07-01", "2027-06-30", "daily")
+        self.assertEqual(choice["granularity"], "daily")
+        self.assertFalse(choice["capped"])
+        self.assertEqual(len(build_buckets("2026-07-01", "2027-06-30", "daily")), 365)
+
+    def test_omitting_the_request_reports_itself_as_automatic(self):
+        for requested in (None, "", "auto"):
+            with self.subTest(requested=requested):
+                choice = resolve_granularity("2026-07-01", "2027-06-30", requested)
+                self.assertTrue(choice["auto"])
+                self.assertEqual(choice["requested"], "auto")
+                self.assertEqual(choice["granularity"], "monthly")
+
+    def test_an_unknown_width_falls_back_to_automatic_rather_than_raising(self):
+        """A stale query parameter must not take the dashboard down."""
+        choice = resolve_granularity("2026-07-01", "2026-08-07", "fortnightly")
+        self.assertTrue(choice["auto"])
+        self.assertEqual(choice["granularity"], "daily")
+
+    def test_too_many_buckets_widens_the_request_and_says_so(self):
+        # Ten years of days is far past MAX_BUCKETS; weeks still are; months are not.
+        choice = resolve_granularity("2016-01-01", "2025-12-31", "daily")
+        self.assertEqual(choice["granularity"], "monthly")
+        self.assertEqual(choice["requested"], "daily")
+        self.assertTrue(choice["capped"])
+        self.assertLessEqual(
+            len(build_buckets("2016-01-01", "2025-12-31", choice["granularity"])),
+            MAX_BUCKETS,
+        )
+
+    def test_every_named_width_builds_buckets_that_cover_the_period(self):
+        """No width may drop a day: the first bucket opens on the period start
+        and the last closes on the period end, whatever the grid underneath."""
+        for granularity in GRANULARITIES:
+            with self.subTest(granularity=granularity):
+                buckets = build_buckets("2026-07-15", "2027-02-10", granularity)
+                self.assertTrue(buckets)
+                self.assertEqual(buckets[0]["start"], "2026-07-15")
+                self.assertEqual(buckets[-1]["end"], "2027-02-10")
+
+
+class TestWeeklyBuckets(FrappeTestCase):
+    def test_weeks_start_on_monday_and_clip_to_the_period(self):
+        # 2026-07-15 is a Wednesday; its week anchor is Monday 2026-07-13.
+        buckets = build_buckets("2026-07-15", "2026-08-02", "weekly")
+        self.assertEqual([b["key"] for b in buckets],
+                         ["2026-07-13", "2026-07-20", "2026-07-27"])
+        self.assertEqual(buckets[0]["start"], "2026-07-15")
+        self.assertEqual(buckets[0]["end"], "2026-07-19")
+        self.assertEqual(buckets[-1]["end"], "2026-08-02")
+
+    def test_postings_collapse_to_their_week_anchor(self):
+        # Monday through Sunday of the same week share one key.
+        for day in ("2026-07-13", "2026-07-16", "2026-07-19"):
+            with self.subTest(day=day):
+                self.assertEqual(bucket_key_for(day, "weekly"), "2026-07-13")
+        self.assertEqual(bucket_key_for("2026-07-20", "weekly"), "2026-07-20")
+
+
+class TestYearlyBuckets(FrappeTestCase):
+    def test_a_fiscal_year_spans_two_yearly_buckets_each_clipped(self):
+        buckets = build_buckets("2026-07-01", "2027-06-30", "yearly")
+        self.assertEqual([b["key"] for b in buckets], ["2026-01-01", "2027-01-01"])
+        self.assertEqual(buckets[0]["start"], "2026-07-01")
+        self.assertEqual(buckets[0]["end"], "2026-12-31")
+        self.assertEqual(buckets[1]["start"], "2027-01-01")
+        self.assertEqual(buckets[1]["end"], "2027-06-30")
+
+    def test_postings_collapse_to_their_year_anchor(self):
+        self.assertEqual(bucket_key_for("2026-11-30", "yearly"), "2026-01-01")
 
 
 class TestMonthlyBuckets(FrappeTestCase):

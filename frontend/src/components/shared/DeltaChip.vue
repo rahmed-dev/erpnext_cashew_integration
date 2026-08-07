@@ -37,13 +37,13 @@ const Icon = computed(() => {
   <span
     v-if="delta != null"
     :class="[
-      'inline-flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded',
+      'inline-flex items-center gap-0.5 text-[10px] font-medium px-1 py-0 rounded',
       tone === 'pos' && 'text-green-700 bg-green-50',
       tone === 'neg' && 'text-red-700 bg-red-50',
       tone === 'neutral' && 'text-gray-500 bg-gray-50',
     ]"
   >
-    <component :is="Icon" :size="11" />
+    <component :is="Icon" :size="9" />
     <span v-if="pct != null">{{ Math.abs(pct) }}%</span>
   </span>
 </template>

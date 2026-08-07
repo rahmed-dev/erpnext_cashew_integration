@@ -43,6 +43,7 @@ declare module 'vue' {
     EmptyState: typeof import('./src/components/shared/EmptyState.vue')['default']
     ExpenseTreemapChart: typeof import('./src/components/finance-dashboard/ExpenseTreemapChart.vue')['default']
     FilterBar: typeof import('./src/components/imports-list/FilterBar.vue')['default']
+    GranularitySelector: typeof import('./src/components/finance-dashboard/GranularitySelector.vue')['default']
     HelloWorld: typeof import('./src/components/HelloWorld.vue')['default']
     ImportCard: typeof import('./src/components/finance-dashboard/ImportCard.vue')['default']
     IncomeExpenseChart: typeof import('./src/components/finance-dashboard/IncomeExpenseChart.vue')['default']

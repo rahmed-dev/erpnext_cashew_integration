@@ -23,6 +23,9 @@ import {
   SEMANTIC, CHROME, alpha, alphaToken, accent,
   moneyAxis, categoryAxis, moneyFormatters, tooltipRow, tooltipTitle,
 } from '@/charts/theme';
+import {
+  granularityAdjective, bucketAxisLabel, bucketTooltipLabel,
+} from '@/utils/granularity';
 
 const props = defineProps({
   // `dashboard_summary.series` — {granularity, buckets, income[], expense[], totals}
@@ -36,7 +39,9 @@ const props = defineProps({
 const buckets = computed(() => props.series?.buckets || []);
 const incomeValues = computed(() => props.series?.income || []);
 const expenseValues = computed(() => props.series?.expense || []);
-const isDaily = computed(() => props.series?.granularity === 'daily');
+// One width for the whole dashboard, chosen by the granularity control and
+// resolved server-side. See `@/utils/granularity`.
+const grain = computed(() => granularityAdjective(props.series));
 
 const hasData = computed(() =>
   buckets.value.length > 0 &&
@@ -67,13 +72,8 @@ const reconciliation = computed(() => {
   return diffs;
 });
 
-/** ISO dates are unreadable stacked on a daily axis; months already read fine. */
 function axisLabel(bucket) {
-  if (!isDaily.value) return bucket.label;
-  const d = new Date(`${bucket.key}T00:00:00`);
-  return Number.isNaN(d.getTime())
-    ? bucket.label
-    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return bucketAxisLabel(bucket, props.series);
 }
 
 const option = computed(() => {
@@ -92,7 +92,7 @@ const option = computed(() => {
         const inc = incomeValues.value[i] || 0;
         const exp = expenseValues.value[i] || 0;
         return (
-          tooltipTitle(b.label || b.key || '') +
+          tooltipTitle(bucketTooltipLabel(b, props.series)) +
           tooltipRow(dot(SEMANTIC.income), 'Income', money(inc)) +
           tooltipRow(dot(SEMANTIC.expense), 'Expense', money(exp)) +
           `<div style="height:1px;background:${CHROME.border};margin:6px 0"></div>` +
@@ -172,7 +172,7 @@ function dot(color) {
     <header class="mb-3">
       <h3 class="text-sm font-semibold text-gray-900">Income vs Expense</h3>
       <p class="text-xs text-gray-500">
-        {{ isDaily ? 'Daily' : 'Monthly' }} — expense below the axis, net as the line
+        {{ grain }} — expense below the axis, net as the line
       </p>
     </header>
 

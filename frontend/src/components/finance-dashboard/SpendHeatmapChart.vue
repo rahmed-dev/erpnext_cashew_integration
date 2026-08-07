@@ -29,7 +29,16 @@ const props = defineProps({
   // `dashboard_summary.daily_spend` — [{ date, amount }], dense.
   days: { type: Array, default: () => [] },
   currency: { type: String, default: 'PKR' },
+  // Only to say so when the dashboard is drawn at a wider width. This chart does
+  // NOT follow the granularity control — a calendar with a cell per month is not
+  // a calendar — and a reader who has just set the dashboard to Monthly needs
+  // that stated rather than left to look like the control was ignored.
+  series: { type: [Object, null], default: null },
 });
+
+const dashboardIsDaily = computed(
+  () => !props.series || props.series.granularity === 'daily',
+);
 
 const CELL = 14;
 /** Column of day-of-week labels plus the month labels above each calendar. */
@@ -158,7 +167,8 @@ function dot(color) {
       <div>
         <h3 class="text-sm font-semibold text-gray-900">Spending calendar</h3>
         <p class="text-xs text-gray-500">
-          One cell per day, darker means more spent
+          One cell per day, darker means more spent<template v-if="!dashboardIsDaily"> — always
+          daily, whatever width the rest of the dashboard is set to</template>
         </p>
       </div>
       <div v-if="hasData" class="text-right shrink-0 text-xs text-gray-500">

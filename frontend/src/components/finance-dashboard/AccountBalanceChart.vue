@@ -21,6 +21,9 @@ import {
   RAMP, CHROME, alpha,
   moneyAxis, categoryAxis, moneyFormatters, tooltipRow, tooltipTitle,
 } from '@/charts/theme';
+import {
+  granularityAdjective, bucketAxisLabel, bucketTooltipLabel,
+} from '@/utils/granularity';
 
 const props = defineProps({
   // `dashboard_summary.series` — needs `buckets` and `balances`.
@@ -30,7 +33,9 @@ const props = defineProps({
 
 const buckets = computed(() => props.series?.buckets || []);
 const accounts = computed(() => props.series?.balances || []);
-const isDaily = computed(() => props.series?.granularity === 'daily');
+// The bucket width is the dashboard's, set once by the granularity control and
+// resolved server-side — never re-derived here. See `@/utils/granularity`.
+const grain = computed(() => granularityAdjective(props.series));
 
 const hasData = computed(() =>
   buckets.value.length > 0 &&
@@ -52,11 +57,7 @@ const folded = computed(
 );
 
 function axisLabel(bucket) {
-  if (!isDaily.value) return bucket.label;
-  const d = new Date(`${bucket.key}T00:00:00`);
-  return Number.isNaN(d.getTime())
-    ? bucket.label
-    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return bucketAxisLabel(bucket, props.series);
 }
 
 const option = computed(() => {
@@ -82,7 +83,7 @@ const option = computed(() => {
           .map((x) => tooltipRow(dot(RAMP[x.idx % RAMP.length]), x.label, money(x.value)));
         const total = list.reduce((sum, a) => sum + (a.values?.[i] || 0), 0);
         return (
-          tooltipTitle(b.label || b.key || '') +
+          tooltipTitle(bucketTooltipLabel(b, props.series)) +
           lines.join('') +
           `<div style="height:1px;background:${CHROME.border};margin:6px 0"></div>` +
           tooltipRow(dot(CHROME.textMuted), 'Total', money(total))
@@ -142,10 +143,10 @@ function dot(color) {
       <h3 class="text-sm font-semibold text-gray-900">Account balances</h3>
       <p class="text-xs text-gray-500">
         <template v-if="stacked">
-          {{ isDaily ? 'Daily' : 'Monthly' }} closing balance per account, stacked
+          {{ grain }} closing balance per account, stacked
         </template>
         <template v-else>
-          {{ isDaily ? 'Daily' : 'Monthly' }} closing balance per account — shown as
+          {{ grain }} closing balance per account — shown as
           separate lines, because an account below zero makes a stack unreadable
         </template>
       </p>

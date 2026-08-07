@@ -45,14 +45,19 @@ export function resolvePeriodRange(period, customRange) {
     return { start: iso(start), end: iso(today) };
   }
   if (period === 'this-fiscal-year') {
-    // An explicit override still wins, then the site's own fiscal year, then
-    // the calendar year as a last resort. The end is capped at today: a fiscal
-    // year mostly in the future would otherwise stretch every chart across
-    // months that cannot contain data.
-    const fyStart = customRange?.fiscalYearStart || useFiscalYear()?.start;
+    // The WHOLE fiscal year, both ends. An earlier version capped the end at
+    // today on the reasoning that future months cannot contain data — but the
+    // period the reader picked is the year, and clipping it turned "This Fiscal
+    // Year" into "the few weeks since the year opened": five weeks into a July
+    // year that read as a daily chart of July, which is not what anyone asked
+    // for. Empty trailing buckets are honest; a silently shortened period is not.
+    const fy = useFiscalYear();
+    const fyStart = customRange?.fiscalYearStart || fy?.start;
+    const fyEnd = customRange?.fiscalYearEnd || fy?.end;
+    if (fyStart && fyEnd) return { start: fyStart, end: fyEnd };
     if (fyStart) return { start: fyStart, end: iso(today) };
-    const ref = new Date(today.getFullYear(), 0, 1);
-    return { start: iso(ref), end: iso(today) };
+    const y = today.getFullYear();
+    return { start: iso(new Date(y, 0, 1)), end: iso(new Date(y, 11, 31)) };
   }
   return null;
 }

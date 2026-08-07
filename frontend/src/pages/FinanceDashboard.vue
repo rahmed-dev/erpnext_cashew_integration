@@ -7,6 +7,7 @@ import PageHeader from '@/components/shared/PageHeader.vue';
 import SkeletonBlock from '@/components/shared/SkeletonBlock.vue';
 
 import PeriodSelector from '@/components/finance-dashboard/PeriodSelector.vue';
+import GranularitySelector from '@/components/finance-dashboard/GranularitySelector.vue';
 import CompanySelector from '@/components/finance-dashboard/CompanySelector.vue';
 import BalanceTileGrid from '@/components/finance-dashboard/BalanceTileGrid.vue';
 import BalanceDetailModal from '@/components/finance-dashboard/BalanceDetailModal.vue';
@@ -34,6 +35,10 @@ const initialPeriod = resolvePeriodRange('this-month') || useDefaultPeriod();
 const state = reactive({
   preset: 'this-month',
   period: { start: initialPeriod?.start || null, end: initialPeriod?.end || null },
+  // The bucket width every time-series chart on this page is drawn at. Held
+  // here, not per chart, because charts sitting side by side at different
+  // resolutions cannot be read against each other.
+  granularity: 'auto',
   company: useCashewSettings().default_company || null,
   showCompanySelector: false,
   detailModal: { open: false, tile: null },
@@ -46,6 +51,7 @@ const summary = createResource({
     period_start: state.period.start,
     period_end: state.period.end,
     company: state.company,
+    granularity: state.granularity,
   }),
   auto: false,
 });
@@ -117,7 +123,10 @@ onBeforeUnmount(() => {
   if (realtimeTimer) clearTimeout(realtimeTimer);
 });
 
-watch(() => [state.period.start, state.period.end, state.company], refetch);
+watch(
+  () => [state.period.start, state.period.end, state.company, state.granularity],
+  refetch,
+);
 
 function onPeriodPreset(p) { state.preset = p; }
 function onPeriod(range) { state.period = range || { start: null, end: null }; }
@@ -139,6 +148,11 @@ function onTileClick(tileId) {
           :period="state.period"
           @update:preset="onPeriodPreset"
           @update:period="onPeriod"
+        />
+        <GranularitySelector
+          :modelValue="state.granularity"
+          :series="summary.data?.series || null"
+          @update:modelValue="(v) => state.granularity = v"
         />
         <CompanySelector
           v-if="state.showCompanySelector"
@@ -226,6 +240,7 @@ function onTileClick(tileId) {
           />
           <SpendHeatmapChart
             :days="summary.data.daily_spend || []"
+            :series="summary.data.series"
             :currency="summary.data.currency"
           />
         </div>

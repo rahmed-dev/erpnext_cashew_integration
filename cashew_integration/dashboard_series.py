@@ -37,10 +37,54 @@ import frappe
 from frappe.query_builder.functions import Sum
 from frappe.utils import add_days, add_months, add_to_date, get_last_day, getdate
 
-# Beyond this span a daily bucket set is too dense to read and too large to
-# ship, so the series switches to monthly. daily_spend is NOT affected — the
-# heatmap is a year grid by nature and always wants days (C5.8).
+# The automatic ladder, by period span. Beyond the first threshold a daily
+# bucket set is too dense to read and too large to ship; beyond the second, a
+# monthly one is — five years of months is sixty points per series across up to
+# eleven series, which is a smear rather than a trend.
+#
+#     up to 92 days      daily      a quarter of days still reads as a shape
+#     up to 366 days     monthly    a fiscal year is twelve points
+#     beyond that        yearly     multi-year comparison is a year-on-year one
+#
+# The second threshold is 366 rather than 365 so a fiscal year containing a leap
+# day is still a year. Past it the period spans more than one year and the
+# reader is asking a year-on-year question, so the buckets become years. A
+# thirteen-month range therefore lands on two coarse buckets — the price of a
+# rule that can be stated in one sentence, and the control is right there for
+# anyone who wants the months back.
+#
+# WEEKLY IS NEVER CHOSEN AUTOMATICALLY. Every span it would suit is already
+# covered by a neighbour — 92 days of days reads fine, a year of months reads
+# better than a year of 53 weeks — so it exists for the reader who explicitly
+# wants it and is not something the server should impose.
+#
+# daily_spend is NOT affected by any of this — the heatmap is a year grid by
+# nature and always wants days (C5.8).
 DAILY_GRANULARITY_MAX_DAYS = 92
+MONTHLY_GRANULARITY_MAX_DAYS = 366
+
+# The bucket widths the series can be drawn at. `auto` is not one of them: it is
+# a request the client makes, resolved here into one of these three before
+# anything is bucketed, so every consumer of a series sees a concrete width.
+GRANULARITY_DAILY = "daily"
+GRANULARITY_WEEKLY = "weekly"
+GRANULARITY_MONTHLY = "monthly"
+GRANULARITY_YEARLY = "yearly"
+# Ordered narrowest to widest. The widening loop in `resolve_granularity` walks
+# this list, so the order is load-bearing, not cosmetic.
+GRANULARITIES = (
+    GRANULARITY_DAILY,
+    GRANULARITY_WEEKLY,
+    GRANULARITY_MONTHLY,
+    GRANULARITY_YEARLY,
+)
+
+# A guard on the explicit choice, not on the automatic one. Daily buckets over a
+# ten-year custom range would be ~3650 points per series across up to eleven
+# series — slow to ship and unreadable once drawn. Past this the request is
+# widened one step at a time and the surface is told, rather than the server
+# quietly honouring something the chart cannot render.
+MAX_BUCKETS = 400
 
 # How many category / account series survive before the rest is folded into a
 # single "(Other)" series. Matches the top-N used by the existing scalar
@@ -89,29 +133,96 @@ def _r(x) -> float:
 # ---------------------------------------------------------------------------
 
 
-def resolve_granularity(start: date, end: date) -> str:
-    """`daily` for a period of at most DAILY_GRANULARITY_MAX_DAYS, else `monthly`.
+def _span_days(start: date, end: date) -> int:
+    """Length of the period in days, inclusive of both endpoints.
 
-    The span is inclusive of both endpoints — a period_start == period_end is
-    one day, not zero.
+    A period_start == period_end is one day, not zero.
     """
-    span_days = (getdate(end) - getdate(start)).days + 1
-    return "daily" if span_days <= DAILY_GRANULARITY_MAX_DAYS else "monthly"
+    return (getdate(end) - getdate(start)).days + 1
+
+
+def _auto_granularity(start: date, end: date) -> str:
+    """The width the server picks when the client does not name one.
+
+    See the ladder documented on the threshold constants above.
+    """
+    span = _span_days(start, end)
+    if span <= DAILY_GRANULARITY_MAX_DAYS:
+        return GRANULARITY_DAILY
+    if span <= MONTHLY_GRANULARITY_MAX_DAYS:
+        return GRANULARITY_MONTHLY
+    return GRANULARITY_YEARLY
+
+
+def _bucket_count(start: date, end: date, granularity: str) -> int:
+    """How many buckets `granularity` would produce, without building them."""
+    span = _span_days(start, end)
+    if granularity == GRANULARITY_DAILY:
+        return span
+    if granularity == GRANULARITY_WEEKLY:
+        return len(build_buckets(start, end, GRANULARITY_WEEKLY))
+    s, e = getdate(start), getdate(end)
+    if granularity == GRANULARITY_YEARLY:
+        return e.year - s.year + 1
+    return (e.year - s.year) * 12 + (e.month - s.month) + 1
+
+
+def resolve_granularity(start: date, end: date, requested: str | None = None) -> dict:
+    """Settle on one bucket width for the whole period, and say how it was chosen.
+
+    `requested` is what the surface asked for — one of GRANULARITIES, or None /
+    "auto" to leave the choice here. A named width is honoured unless it would
+    produce more than MAX_BUCKETS buckets, in which case it is widened one step
+    at a time. An unrecognised value is treated as no request rather than raising:
+    the period is still answerable, and a dashboard that returns an error because
+    a query parameter was stale helps nobody.
+
+    Returns {granularity, requested, auto, capped} so the client can label the
+    control honestly — in particular, a chart must never claim to be drawn at a
+    width the reader chose when it was actually widened out from under them.
+    """
+    auto = _auto_granularity(start, end)
+    if not requested or requested == "auto" or requested not in GRANULARITIES:
+        return {
+            "granularity": auto,
+            "requested": "auto",
+            "auto": True,
+            "capped": False,
+        }
+
+    granularity = requested
+    capped = False
+    order = list(GRANULARITIES)
+    while (
+        _bucket_count(start, end, granularity) > MAX_BUCKETS
+        and order.index(granularity) < len(order) - 1
+    ):
+        granularity = order[order.index(granularity) + 1]
+        capped = True
+
+    return {
+        "granularity": granularity,
+        "requested": requested,
+        "auto": False,
+        "capped": capped,
+    }
 
 
 def build_buckets(start: date, end: date, granularity: str) -> list[dict]:
     """The bucket grid for a period. Dense — every bucket exists even if empty.
 
     Each bucket carries its own `start`/`end` so the caller never has to
-    re-derive month lengths, and the first/last monthly buckets are CLIPPED to
-    the period. A period starting mid-month must not attribute the earlier part
-    of that month to itself.
+    re-derive month lengths, and the first/last buckets of the wider widths are
+    CLIPPED to the period. A period starting mid-month must not attribute the
+    earlier part of that month to itself, and the same holds for a mid-week
+    start: the figure under a bucket label has to be a figure from inside the
+    period the reader asked for.
     """
     start = getdate(start)
     end = getdate(end)
     buckets: list[dict] = []
 
-    if granularity == "daily":
+    if granularity == GRANULARITY_DAILY:
         cursor = start
         while cursor <= end:
             buckets.append({
@@ -121,6 +232,35 @@ def build_buckets(start: date, end: date, granularity: str) -> list[dict]:
                 "end": cursor.isoformat(),
             })
             cursor = add_days(cursor, 1)
+        return buckets
+
+    if granularity == GRANULARITY_WEEKLY:
+        # Weeks start Monday, matching the heatmap's `firstDay: 1` and ISO. The
+        # cursor walks whole weeks from the Monday on or before the period start
+        # so the key is stable no matter which day the period happens to open on.
+        cursor = add_days(start, -start.weekday())
+        while cursor <= end:
+            week_end = add_days(cursor, 6)
+            buckets.append({
+                "key": cursor.isoformat(),
+                "label": cursor.strftime("%-d %b"),
+                "start": max(cursor, start).isoformat(),
+                "end": min(week_end, end).isoformat(),
+            })
+            cursor = add_days(cursor, 7)
+        return buckets
+
+    if granularity == GRANULARITY_YEARLY:
+        cursor = start.replace(month=1, day=1)
+        while cursor <= end:
+            year_end = cursor.replace(month=12, day=31)
+            buckets.append({
+                "key": cursor.isoformat(),
+                "label": str(cursor.year),
+                "start": max(cursor, start).isoformat(),
+                "end": min(year_end, end).isoformat(),
+            })
+            cursor = cursor.replace(year=cursor.year + 1, month=1, day=1)
         return buckets
 
     cursor = start.replace(day=1)
@@ -138,8 +278,12 @@ def build_buckets(start: date, end: date, granularity: str) -> list[dict]:
 
 def bucket_key_for(posting_date: date, granularity: str) -> str:
     d = getdate(posting_date)
-    if granularity == "daily":
+    if granularity == GRANULARITY_DAILY:
         return d.isoformat()
+    if granularity == GRANULARITY_WEEKLY:
+        return add_days(d, -d.weekday()).isoformat()
+    if granularity == GRANULARITY_YEARLY:
+        return d.replace(month=1, day=1).isoformat()
     return d.replace(day=1).isoformat()
 
 
@@ -189,9 +333,17 @@ def daily_spend(company: str, start: str, end: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def period_series(company: str, start: str, end: str) -> dict:
-    """Income / expense trend, per-category breakdown, per-account balances."""
-    granularity = resolve_granularity(start, end)
+def period_series(
+    company: str, start: str, end: str, granularity: str | None = None
+) -> dict:
+    """Income / expense trend, per-category breakdown, per-account balances.
+
+    `granularity` is the surface's request — see `resolve_granularity`. Every
+    block below is bucketed on the ONE width settled here, so no two charts on
+    the dashboard can end up disagreeing about what a point represents.
+    """
+    choice = resolve_granularity(start, end, granularity)
+    granularity = choice["granularity"]
     buckets = build_buckets(start, end, granularity)
     index = {b["key"]: i for i, b in enumerate(buckets)}
     size = len(buckets)
@@ -203,6 +355,11 @@ def period_series(company: str, start: str, end: str) -> dict:
 
     return {
         "granularity": granularity,
+        # What the surface asked for, and whether it got it. A control that
+        # silently disagrees with the chart beneath it is worse than no control.
+        "granularity_requested": choice["requested"],
+        "granularity_auto": choice["auto"],
+        "granularity_capped": choice["capped"],
         "buckets": buckets,
         "income": income,
         "expense": expense,

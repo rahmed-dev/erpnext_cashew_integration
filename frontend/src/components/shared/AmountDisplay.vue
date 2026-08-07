@@ -13,9 +13,18 @@ const props = defineProps({
 });
 
 // `big` is the balance-tile figure and nothing else. It scales with the
-// breakpoint because the tiles sit two-up on a phone, where a fixed 26px
-// "Rs 1,885,076.42" overflows its own card.
-const BIG_CLASS = 'text-[19px] sm:text-[22px] lg:text-[26px] font-semibold tracking-[-0.02em]';
+// breakpoint because the tiles sit two-up on a phone, where a fixed desktop
+// size for "Rs 1,885,076.42" overflows its own card.
+//
+// These are deliberately modest for a headline number. The tiles are a strip
+// the reader scans past on the way to the charts, not the point of the page,
+// and at the earlier 26px seven of them owned the whole first screen. A figure
+// only has to be legible to be read; it does not have to be large.
+// The step DOWN at xl is not a mistake: that is where the tile strip goes to
+// seven columns, so each tile is narrower there than at lg despite the wider
+// page, and a seven-digit figure has to keep fitting on one line.
+const BIG_CLASS =
+  'text-[15px] sm:text-[16px] lg:text-[18px] xl:text-[16px] font-semibold tracking-[-0.02em] whitespace-nowrap';
 
 function numeric() {
   if (props.amount === null || props.amount === undefined || props.amount === '') return null;
